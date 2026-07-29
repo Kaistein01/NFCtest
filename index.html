@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nfctest — URL fragment length probe</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #16181d; --muted: #656b7a;
+    --line: #dfe2e8; --card: #f5f6f8; --accent: #1a6fd4;
+    --ok: #17794a; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --fg: #e8eaee; --muted: #9aa1b0;
+      --line: #2c3038; --card: #1c1f25; --accent: #63a4f0;
+      --ok: #4cc38a; --bad: #f2635a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 14px 48px;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 15px; margin: 0 0 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  h2 { font-size: 13px; margin: 26px 0 8px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .headline {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 16px; text-align: center;
+  }
+  .headline .num {
+    font: 700 clamp(40px, 16vw, 68px)/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; word-break: break-all;
+  }
+  .headline .lbl { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .empty { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 400; color: var(--muted); width: 52%; }
+  td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+       font-variant-numeric: tabular-nums; word-break: break-all; }
+  .bad { color: var(--bad); }
+  pre {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px; margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  button {
+    font: inherit; font-weight: 600; color: #fff; background: var(--accent);
+    border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer;
+    -webkit-appearance: none; touch-action: manipulation;
+  }
+  button:active { opacity: .8; }
+  input[type=number] {
+    font: inherit; padding: 10px; width: 8em; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    -webkit-appearance: none;
+  }
+  label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .note { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>nfctest — fragment length probe</h1>
+
+<div class="headline">
+  <div class="num" id="bigNum">—</div>
+  <div class="lbl">payload characters after <code>#</code></div>
+</div>
+
+<h2>Measurements</h2>
+<table>
+  <tr><th>Payload chars (raw)</th>        <td id="mRaw">—</td></tr>
+  <tr><th>Payload chars (decoded)</th>    <td id="mDec">—</td></tr>
+  <tr><th>Payload bytes (UTF-8)</th>      <td id="mBytes">—</td></tr>
+  <tr><th>Full URL length</th>            <td id="mHref">—</td></tr>
+  <tr><th>Navigation-entry URL length</th><td id="mNav">—</td></tr>
+  <tr><th>Last intact position marker</th><td id="mMark">—</td></tr>
+  <tr><th>SHA-256 (first 16 hex)</th>     <td id="mHash">—</td></tr>
+</table>
+
+<h2>Payload preview</h2>
+<pre id="preview">—</pre>
+
+<h2>Environment</h2>
+<table>
+  <tr><th>User agent</th> <td id="eUA">—</td></tr>
+  <tr><th>Screen</th>     <td id="eScreen">—</td></tr>
+  <tr><th>Charset</th>    <td id="eCharset">—</td></tr>
+  <tr><th>Referrer</th>   <td id="eRef">—</td></tr>
+</table>
+
+<div class="row" style="margin-top:16px">
+  <button id="btnCopy">Copy report row</button>
+  <span class="note" id="copyNote"></span>
+</div>
+
+<h2>Generate a test URL</h2>
+<div class="row">
+  <label>Payload length <input type="number" id="genN" value="2000" min="1" max="60000" step="100"></label>
+  <button id="btnGen">Generate</button>
+</div>
+<div class="row">
+  <label><input type="checkbox" id="genUtf8"> append 10&times; &uuml; (multi-byte probe)</label>
+</div>
+<pre id="genOut">—</pre>
+<div class="row" style="margin-top:10px">
+  <button id="btnGenCopy">Copy URL</button>
+  <span class="note" id="genNote"></span>
+</div>
+<p class="note">
+  Filler is built from 6-character chunks <code>NNNNN.</code> where <code>NNNNN</code> is the
+  running character count at that chunk's end. The tail of a truncated payload therefore states
+  its own surviving length.
+</p>
+
+<script>
+"use strict";
+
+var $ = function (id) { return document.getElementById(id); };
+
+function pad5(n) { var s = String(n); while (s.length < 5) { s = "0" + s; } return s; }
+
+// 6-char self-describing chunks: "00006.00012.00018." ... truncated to exactly n chars.
+function makeFiller(n) {
+  var out = [], i = 6, len = 0;
+  while (len < n) { out.push(pad5(i) + "."); len += 6; i += 6; }
+  return out.join("").slice(0, n);
+}
+
+// Value of the last chunk whose marker still agrees with its own offset.
+function lastIntactMarker(s) {
+  var re = /(\d{5})\./g, m, best = null;
+  while ((m = re.exec(s)) !== null) {
+    if (parseInt(m[1], 10) === m.index + 6) { best = m.index + 6; }
+  }
+  return best;
+}
+
+function utf8Bytes(s) {
+  if (window.TextEncoder) { return new TextEncoder().encode(s).length; }
+  return unescape(encodeURIComponent(s)).length; // legacy fallback
+}
+
+// FNV-1a 32-bit, used only when crypto.subtle is unavailable (non-secure context).
+function fnv1a(s) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i) & 0xff;
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+
+function hash(s, cb) {
+  if (window.crypto && crypto.subtle && window.TextEncoder) {
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)).then(function (buf) {
+      var hex = "", v = new Uint8Array(buf);
+      for (var i = 0; i < 8; i++) { hex += ("0" + v[i].toString(16)).slice(-2); }
+      cb(hex);
+    })["catch"](function () { cb("fnv1a:" + fnv1a(s)); });
+  } else {
+    cb("fnv1a:" + fnv1a(s));
+  }
+}
+
+function preview(s) {
+  if (s.length <= 96) { return s; }
+  return s.slice(0, 48) + "\n  … " + (s.length - 96) + " chars omitted …\n" + s.slice(-48);
+}
+
+var report = {};
+
+function render() {
+  var raw = location.hash.slice(1);
+
+  var decoded = null, decodeErr = false;
+  try { decoded = decodeURIComponent(raw); } catch (e) { decodeErr = true; }
+  var effective = decoded === null ? raw : decoded;
+
+  $("bigNum").textContent = raw.length;
+  $("bigNum").className = "num" + (raw.length === 0 ? " empty" : "");
+
+  $("mRaw").textContent = raw.length;
+  if (decodeErr) {
+    $("mDec").innerHTML = '<span class="bad">malformed — cut mid-%XX escape</span>';
+  } else {
+    $("mDec").textContent = decoded.length;
+  }
+  $("mBytes").textContent = utf8Bytes(effective);
+  $("mHref").textContent = location.href.length;
+
+  var navLen = "n/a";
+  try {
+    var nav = performance.getEntriesByType("navigation")[0];
+    if (nav && nav.name) { navLen = nav.name.length; }
+  } catch (e) { /* not supported */ }
+  $("mNav").textContent = navLen;
+  if (navLen !== "n/a" && navLen !== location.href.length) {
+    $("mNav").className = "bad";
+    $("mNav").textContent = navLen + "  ≠ full URL length";
+  } else {
+    $("mNav").className = "";
+  }
+
+  var mark = lastIntactMarker(effective);
+  $("mMark").textContent = mark === null ? "none found" : mark;
+
+  $("preview").textContent = raw.length ? preview(effective) : "(no fragment — append #… to the URL)";
+
+  $("eUA").textContent = navigator.userAgent;
+  $("eScreen").textContent = screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x";
+  $("eCharset").textContent = document.characterSet || "?";
+  $("eRef").textContent = document.referrer || "(none)";
+
+  report = {
+    chars: raw.length,
+    decoded: decodeErr ? "malformed" : decoded.length,
+    bytes: utf8Bytes(effective),
+    href: location.href.length,
+    nav: navLen,
+    marker: mark === null ? "none" : mark,
+    hash: "…"
+  };
+
+  hash(effective, function (h) {
+    $("mHash").textContent = h;
+    report.hash = h;
+  });
+}
+
+function copy(text, noteEl) {
+  function done(ok) { noteEl.textContent = ok ? "copied" : "copy failed — select manually"; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    return;
+  }
+  var ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "-1000px";
+  document.body.appendChild(ta);
+  ta.select();
+  var ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  done(ok);
+}
+
+$("btnCopy").addEventListener("click", function () {
+  var row = [
+    new Date().toISOString(),
+    report.chars, report.decoded, report.bytes,
+    report.href, report.nav, report.marker, report.hash,
+    navigator.userAgent
+  ].join("\t");
+  copy(row, $("copyNote"));
+});
+
+var genURL = "";
+
+function generate() {
+  var n = parseInt($("genN").value, 10);
+  if (!(n > 0)) { $("genOut").textContent = "enter a length > 0"; genURL = ""; return; }
+
+  var payload = makeFiller(n);
+  if ($("genUtf8").checked) { payload += "üüüüüüüüüü"; }
+
+  var base = location.href.split("#")[0];
+  genURL = base + "#" + payload;
+
+  $("genOut").textContent =
+    genURL.slice(0, 60) + "\n  … \n" + genURL.slice(-40) + "\n\n" +
+    "payload chars : " + payload.length + "\n" +
+    "payload bytes : " + utf8Bytes(payload) + "\n" +
+    "URL chars     : " + genURL.length + "\n" +
+    "URL bytes     : " + utf8Bytes(genURL) + "\n" +
+    "on-tag bytes  : " + (utf8Bytes(genURL) - 8) + "  (NDEF URI prefix 0x04 strips \"https://\")";
+  $("genNote").textContent = "";
+}
+
+$("btnGen").addEventListener("click", generate);
+$("btnGenCopy").addEventListener("click", function () {
+  if (genURL) { copy(genURL, $("genNote")); } else { $("genNote").textContent = "generate first"; }
+});
+
+window.addEventListener("hashchange", render);
+render();
+generate();
+</script>
+
+</body>
+</html>
