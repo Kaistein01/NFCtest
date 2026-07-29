@@ -8,13 +8,13 @@
   :root {
     --bg: #ffffff; --fg: #16181d; --muted: #656b7a;
     --line: #dfe2e8; --card: #f5f6f8; --accent: #1a6fd4;
-    --ok: #17794a; --bad: #b3261e;
+    --ok: #17794a; --bad: #b3261e; --warn: #a1610b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14161a; --fg: #e8eaee; --muted: #9aa1b0;
       --line: #2c3038; --card: #1c1f25; --accent: #63a4f0;
-      --ok: #4cc38a; --bad: #f2635a;
+      --ok: #4cc38a; --bad: #f2635a; --warn: #e0a83a;
     }
   }
   * { box-sizing: border-box; }
@@ -34,7 +34,11 @@
     font: 700 clamp(40px, 16vw, 68px)/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-variant-numeric: tabular-nums; word-break: break-all;
   }
-  .headline .lbl { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .headline .sub {
+    font: 600 clamp(18px, 7vw, 28px)/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; margin-top: 10px; color: var(--accent);
+  }
+  .headline .lbl { color: var(--muted); font-size: 13px; margin-top: 5px; }
   .empty { color: var(--bad); }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -42,6 +46,8 @@
   td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
        font-variant-numeric: tabular-nums; word-break: break-all; }
   .bad { color: var(--bad); }
+  .warn { color: var(--warn); }
+  .ok { color: var(--ok); }
   pre {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px; margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
@@ -61,7 +67,7 @@
   label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
   .note { color: var(--muted); font-size: 13px; }
-  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -70,21 +76,25 @@
 
 <div class="headline">
   <div class="num" id="bigNum">—</div>
-  <div class="lbl">payload characters after <code>#</code></div>
+  <div class="lbl">base64 characters after <code>#</code></div>
+  <div class="sub" id="bigBytes">—</div>
+  <div class="lbl">decoded data bytes</div>
 </div>
 
 <h2>Measurements</h2>
 <table>
-  <tr><th>Payload chars (raw)</th>        <td id="mRaw">—</td></tr>
-  <tr><th>Payload chars (decoded)</th>    <td id="mDec">—</td></tr>
-  <tr><th>Payload bytes (UTF-8)</th>      <td id="mBytes">—</td></tr>
-  <tr><th>Full URL length</th>            <td id="mHref">—</td></tr>
-  <tr><th>Navigation-entry URL length</th><td id="mNav">—</td></tr>
-  <tr><th>Last intact position marker</th><td id="mMark">—</td></tr>
-  <tr><th>SHA-256 (first 16 hex)</th>     <td id="mHash">—</td></tr>
+  <tr><th>Fragment chars (raw)</th>        <td id="mRaw">—</td></tr>
+  <tr><th>Fragment bytes (UTF-8)</th>      <td id="mFragBytes">—</td></tr>
+  <tr><th>Base64 alphabet</th>             <td id="mAlpha">—</td></tr>
+  <tr><th>Base64 decode</th>               <td id="mStatus">—</td></tr>
+  <tr><th>Decoded data bytes</th>          <td id="mBytes">—</td></tr>
+  <tr><th>Full URL length</th>             <td id="mHref">—</td></tr>
+  <tr><th>Navigation-entry URL length</th> <td id="mNav">—</td></tr>
+  <tr><th>Last intact position marker</th> <td id="mMark">—</td></tr>
+  <tr><th>SHA-256 of decoded data</th>     <td id="mHash">—</td></tr>
 </table>
 
-<h2>Payload preview</h2>
+<h2>Decoded payload preview</h2>
 <pre id="preview">—</pre>
 
 <h2>Environment</h2>
@@ -102,11 +112,11 @@
 
 <h2>Generate a test URL</h2>
 <div class="row">
-  <label>Payload length <input type="number" id="genN" value="2000" min="1" max="60000" step="100"></label>
+  <label>Data bytes <input type="number" id="genN" value="1500" min="1" max="60000" step="100"></label>
   <button id="btnGen">Generate</button>
 </div>
 <div class="row">
-  <label><input type="checkbox" id="genUtf8"> append 10&times; &uuml; (multi-byte probe)</label>
+  <label><input type="checkbox" id="genStd"> use standard base64 (<code>+ / =</code>) instead of base64url (<code>- _</code>)</label>
 </div>
 <pre id="genOut">—</pre>
 <div class="row" style="margin-top:10px">
@@ -114,9 +124,10 @@
   <span class="note" id="genNote"></span>
 </div>
 <p class="note">
-  Filler is built from 6-character chunks <code>NNNNN.</code> where <code>NNNNN</code> is the
-  running character count at that chunk's end. The tail of a truncated payload therefore states
-  its own surviving length.
+  The data being encoded is a ruler of 6-character chunks <code>NNNNN.</code> where
+  <code>NNNNN</code> is the running byte count at that chunk's end. Base64 maps 4 characters onto
+  3 bytes, so a truncated fragment still decodes cleanly up to its last whole group — and the tail
+  of the decoded ruler then states its own surviving length.
 </p>
 
 <script>
@@ -127,7 +138,7 @@ var $ = function (id) { return document.getElementById(id); };
 function pad5(n) { var s = String(n); while (s.length < 5) { s = "0" + s; } return s; }
 
 // 6-char self-describing chunks: "00006.00012.00018." ... truncated to exactly n chars.
-function makeFiller(n) {
+function makeRuler(n) {
   var out = [], i = 6, len = 0;
   while (len < n) { out.push(pad5(i) + "."); len += 6; i += 6; }
   return out.join("").slice(0, n);
@@ -147,52 +158,101 @@ function utf8Bytes(s) {
   return unescape(encodeURIComponent(s)).length; // legacy fallback
 }
 
+function b64encode(binStr, urlSafe) {
+  var b = btoa(binStr);
+  return urlSafe ? b.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : b;
+}
+
+// Decodes standard or url-safe base64, tolerating missing padding and a truncated
+// trailing group. Returns { bytes, text, dropped, alphabet, error }.
+function b64decode(s) {
+  var out = { bytes: null, text: "", dropped: 0, alphabet: "—", error: null };
+  if (!s.length) { return out; }
+
+  var hasUrl = /[-_]/.test(s), hasStd = /[+/]/.test(s);
+  out.alphabet = hasUrl && hasStd ? "mixed (suspect)"
+               : hasUrl ? "base64url (- _)"
+               : hasStd ? "standard (+ /)"
+               : "ambiguous — no distinguishing char";
+
+  var t = s.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  if (!/^[A-Za-z0-9+/]*$/.test(t)) { out.error = "contains non-base64 characters"; return out; }
+
+  var rem = t.length % 4;
+  if (rem === 1) { t = t.slice(0, -1); out.dropped = 1; rem = 0; } // 1 leftover char is undecodable
+  else if (rem) { out.dropped = 0; }
+  if (rem) { t += new Array(5 - rem).join("="); }
+
+  var bin;
+  try { bin = atob(t); } catch (e) { out.error = "atob failed"; return out; }
+
+  var arr = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) { arr[i] = bin.charCodeAt(i) & 0xff; }
+  out.bytes = arr;
+  out.text = bin; // ruler data is ASCII, so the binary string is the text
+  return out;
+}
+
 // FNV-1a 32-bit, used only when crypto.subtle is unavailable (non-secure context).
-function fnv1a(s) {
+function fnv1a(bytes) {
   var h = 0x811c9dc5;
-  for (var i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i) & 0xff;
+  for (var i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
     h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
   }
   return ("0000000" + h.toString(16)).slice(-8);
 }
 
-function hash(s, cb) {
-  if (window.crypto && crypto.subtle && window.TextEncoder) {
-    crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)).then(function (buf) {
+function hash(bytes, cb) {
+  if (!bytes || !bytes.length) { cb("—"); return; }
+  if (window.crypto && crypto.subtle) {
+    crypto.subtle.digest("SHA-256", bytes).then(function (buf) {
       var hex = "", v = new Uint8Array(buf);
       for (var i = 0; i < 8; i++) { hex += ("0" + v[i].toString(16)).slice(-2); }
       cb(hex);
-    })["catch"](function () { cb("fnv1a:" + fnv1a(s)); });
+    })["catch"](function () { cb("fnv1a:" + fnv1a(bytes)); });
   } else {
-    cb("fnv1a:" + fnv1a(s));
+    cb("fnv1a:" + fnv1a(bytes));
   }
 }
 
 function preview(s) {
   if (s.length <= 96) { return s; }
-  return s.slice(0, 48) + "\n  … " + (s.length - 96) + " chars omitted …\n" + s.slice(-48);
+  return s.slice(0, 48) + "\n  … " + (s.length - 96) + " bytes omitted …\n" + s.slice(-48);
 }
 
 var report = {};
 
 function render() {
   var raw = location.hash.slice(1);
-
-  var decoded = null, decodeErr = false;
-  try { decoded = decodeURIComponent(raw); } catch (e) { decodeErr = true; }
-  var effective = decoded === null ? raw : decoded;
+  var dec = b64decode(raw);
+  var nBytes = dec.bytes ? dec.bytes.length : 0;
 
   $("bigNum").textContent = raw.length;
   $("bigNum").className = "num" + (raw.length === 0 ? " empty" : "");
+  $("bigBytes").textContent = dec.error ? "decode failed" : nBytes;
+  $("bigBytes").className = "sub" + (dec.error ? " bad" : "");
 
   $("mRaw").textContent = raw.length;
-  if (decodeErr) {
-    $("mDec").innerHTML = '<span class="bad">malformed — cut mid-%XX escape</span>';
+  $("mFragBytes").textContent = utf8Bytes(raw);
+  $("mAlpha").textContent = dec.alphabet;
+  $("mAlpha").className = /suspect/.test(dec.alphabet) ? "bad" : "";
+
+  if (dec.error) {
+    $("mStatus").textContent = dec.error;
+    $("mStatus").className = "bad";
+  } else if (dec.dropped) {
+    $("mStatus").textContent = "ok — dropped " + dec.dropped + " char to align group";
+    $("mStatus").className = "warn";
+  } else if (raw.length) {
+    $("mStatus").textContent = "clean";
+    $("mStatus").className = "ok";
   } else {
-    $("mDec").textContent = decoded.length;
+    $("mStatus").textContent = "—";
+    $("mStatus").className = "";
   }
-  $("mBytes").textContent = utf8Bytes(effective);
+
+  $("mBytes").textContent = dec.error ? "—" : nBytes;
   $("mHref").textContent = location.href.length;
 
   var navLen = "n/a";
@@ -200,18 +260,20 @@ function render() {
     var nav = performance.getEntriesByType("navigation")[0];
     if (nav && nav.name) { navLen = nav.name.length; }
   } catch (e) { /* not supported */ }
-  $("mNav").textContent = navLen;
   if (navLen !== "n/a" && navLen !== location.href.length) {
-    $("mNav").className = "bad";
     $("mNav").textContent = navLen + "  ≠ full URL length";
+    $("mNav").className = "bad";
   } else {
+    $("mNav").textContent = navLen;
     $("mNav").className = "";
   }
 
-  var mark = lastIntactMarker(effective);
+  var mark = lastIntactMarker(dec.text);
   $("mMark").textContent = mark === null ? "none found" : mark;
 
-  $("preview").textContent = raw.length ? preview(effective) : "(no fragment — append #… to the URL)";
+  $("preview").textContent = !raw.length ? "(no fragment — append #… to the URL)"
+                           : dec.error ? "(cannot decode)"
+                           : preview(dec.text);
 
   $("eUA").textContent = navigator.userAgent;
   $("eScreen").textContent = screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x";
@@ -220,15 +282,16 @@ function render() {
 
   report = {
     chars: raw.length,
-    decoded: decodeErr ? "malformed" : decoded.length,
-    bytes: utf8Bytes(effective),
+    bytes: dec.error ? "decode-failed" : nBytes,
+    alphabet: dec.alphabet,
+    status: dec.error || (dec.dropped ? "dropped-" + dec.dropped : "clean"),
     href: location.href.length,
     nav: navLen,
     marker: mark === null ? "none" : mark,
     hash: "…"
   };
 
-  hash(effective, function (h) {
+  hash(dec.bytes, function (h) {
     $("mHash").textContent = h;
     report.hash = h;
   });
@@ -256,7 +319,7 @@ function copy(text, noteEl) {
 $("btnCopy").addEventListener("click", function () {
   var row = [
     new Date().toISOString(),
-    report.chars, report.decoded, report.bytes,
+    report.chars, report.bytes, report.alphabet, report.status,
     report.href, report.nav, report.marker, report.hash,
     navigator.userAgent
   ].join("\t");
@@ -267,21 +330,19 @@ var genURL = "";
 
 function generate() {
   var n = parseInt($("genN").value, 10);
-  if (!(n > 0)) { $("genOut").textContent = "enter a length > 0"; genURL = ""; return; }
+  if (!(n > 0)) { $("genOut").textContent = "enter a size > 0"; genURL = ""; return; }
 
-  var payload = makeFiller(n);
-  if ($("genUtf8").checked) { payload += "üüüüüüüüüü"; }
-
+  var data = makeRuler(n);
+  var frag = b64encode(data, !$("genStd").checked);
   var base = location.href.split("#")[0];
-  genURL = base + "#" + payload;
+  genURL = base + "#" + frag;
 
   $("genOut").textContent =
     genURL.slice(0, 60) + "\n  … \n" + genURL.slice(-40) + "\n\n" +
-    "payload chars : " + payload.length + "\n" +
-    "payload bytes : " + utf8Bytes(payload) + "\n" +
-    "URL chars     : " + genURL.length + "\n" +
-    "URL bytes     : " + utf8Bytes(genURL) + "\n" +
-    "on-tag bytes  : " + (utf8Bytes(genURL) - 8) + "  (NDEF URI prefix 0x04 strips \"https://\")";
+    "data bytes     : " + n + "\n" +
+    "fragment chars : " + frag.length + "   (×" + (frag.length / n).toFixed(3) + ")\n" +
+    "URL chars      : " + genURL.length + "\n" +
+    "on-tag bytes   : " + (genURL.length - 8) + "   (NDEF URI prefix 0x04 strips \"https://\")";
   $("genNote").textContent = "";
 }
 
