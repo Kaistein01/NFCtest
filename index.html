@@ -3,7 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nfctest — URL fragment length probe</title>
+<title>nfctest — tempcomp decoder &amp; fragment probe</title>
+<!--
+  One file. No build, no dependencies, no network requests after load.
+  A page reached by tapping a tag may load on a bad connection in a warehouse;
+  a second request is a failure mode you cannot diagnose from there.
+
+  Do NOT add YAML front matter. An empty .nojekyll beside this file disables
+  Jekyll for the repository, so this is copied verbatim either way - but front
+  matter would make Liquid interpret {{ ... }} inside the script.
+
+  Format spec: ../../COMPRESSION-PLAN.md section 6. Decode procedure: section 8.
+  Rebuild rationale: REBUILD-PLAN.md.
+-->
 <style>
   :root {
     --bg: #ffffff; --fg: #16181d; --muted: #656b7a;
@@ -40,6 +52,15 @@
   }
   .headline .lbl { color: var(--muted); font-size: 13px; margin-top: 5px; }
   .empty { color: var(--bad); }
+  .banner {
+    margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card);
+    font: 600 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    word-break: break-word;
+  }
+  .banner.ok   { color: var(--ok);   border-color: var(--ok); }
+  .banner.bad  { color: var(--bad);  border-color: var(--bad); }
+  .banner.warn { color: var(--warn); border-color: var(--warn); }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-weight: 400; color: var(--muted); width: 52%; }
@@ -59,6 +80,7 @@
     -webkit-appearance: none; touch-action: manipulation;
   }
   button:active { opacity: .8; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
   input[type=number] {
     font: inherit; padding: 10px; width: 8em; border-radius: 8px;
     border: 1px solid var(--line); background: var(--bg); color: var(--fg);
@@ -68,20 +90,85 @@
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
   .note { color: var(--muted); font-size: 13px; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .hide { display: none; }
+
+  /* chart */
+  .chartbox {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 8px 4px;
+  }
+  .chart { width: 100%; height: auto; display: block; }
+  .chart .grid  { stroke: var(--line); stroke-width: 1; }
+  .chart .frame { fill: none; stroke: var(--line); stroke-width: 1; }
+  .chart .line  { fill: none; stroke: var(--accent); stroke-width: 1.6;
+                  stroke-linejoin: round; stroke-linecap: round; }
+  .chart .gap   { stroke: var(--bad); stroke-width: 1.5; opacity: .55; }
+  .chart text   { fill: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 </head>
 <body>
 
-<h1>nfctest — fragment length probe</h1>
+<h1>nfctest — tempcomp decoder &amp; fragment probe</h1>
 
 <div class="headline">
   <div class="num" id="bigNum">—</div>
-  <div class="lbl">base64 characters after <code>#</code></div>
-  <div class="sub" id="bigBytes">—</div>
-  <div class="lbl">decoded data bytes</div>
+  <div class="lbl" id="bigNumLbl">base64 characters after <code>#</code></div>
+  <div class="sub" id="bigSub">—</div>
+  <div class="lbl" id="bigSubLbl">decoded data bytes</div>
 </div>
 
-<h2>Measurements</h2>
+<div class="banner" id="banner">—</div>
+
+<div class="row hide" id="degradeRow" style="margin-top:10px">
+  <label><input type="checkbox" id="degrade">
+    decode anyway, ignoring the CRC — <strong>diagnostic only</strong></label>
+</div>
+
+<!-- container mode ------------------------------------------------------- -->
+<div id="secChart" class="hide">
+  <h2>Samples over time</h2>
+  <div class="chartbox"><div id="chart"></div></div>
+  <p class="note" id="chartNote"></p>
+</div>
+
+<div id="secContainer" class="hide">
+  <h2>Container</h2>
+  <table>
+    <tr><th>Version / scheme</th>      <td id="cVer">—</td></tr>
+    <tr><th>Samples</th>               <td id="cCount">—</td></tr>
+    <tr><th>Sampling interval</th>     <td id="cInterval">—</td></tr>
+    <tr><th>First absolute index</th>  <td id="cFirst">—</td></tr>
+    <tr><th>Covered time span</th>     <td id="cSpan">—</td></tr>
+    <tr><th>CRC-16/CCITT-FALSE</th>    <td id="cCrc">—</td></tr>
+    <tr><th>Byte breakdown</th>        <td id="cBytes">—</td></tr>
+  </table>
+
+  <h2>Compression</h2>
+  <table>
+    <tr><th>vs raw int16 (samples × 2 B)</th> <td id="kRatio">—</td></tr>
+    <tr><th>Bits per sample (payload only)</th> <td id="kBits">—</td></tr>
+  </table>
+
+  <h2>Data</h2>
+  <table>
+    <tr><th>Minimum</th>      <td id="dMin">—</td></tr>
+    <tr><th>Maximum</th>      <td id="dMax">—</td></tr>
+    <tr><th>Mean</th>         <td id="dMean">—</td></tr>
+    <tr><th>Span</th>         <td id="dSpan">—</td></tr>
+    <tr><th>Faults</th>       <td id="dFaults">—</td></tr>
+  </table>
+
+  <h2>Block coding</h2>
+  <table id="tBlocks"><tr><th>—</th><td>—</td></tr></table>
+  <p class="note">
+    Which option each 32-sample block chose. <code>zero</code> means every delta in the block was
+    zero. <code>escape</code> means the block was too noisy to code and was stored raw — in a
+    normal log that is worth investigating.
+  </p>
+</div>
+
+<!-- transport, both modes ------------------------------------------------ -->
+<h2>Transport</h2>
 <table>
   <tr><th>Fragment chars (raw)</th>        <td id="mRaw">—</td></tr>
   <tr><th>Fragment bytes (UTF-8)</th>      <td id="mFragBytes">—</td></tr>
@@ -90,12 +177,21 @@
   <tr><th>Decoded data bytes</th>          <td id="mBytes">—</td></tr>
   <tr><th>Full URL length</th>             <td id="mHref">—</td></tr>
   <tr><th>Navigation-entry URL length</th> <td id="mNav">—</td></tr>
-  <tr><th>Last intact position marker</th> <td id="mMark">—</td></tr>
-  <tr><th>SHA-256 of decoded data</th>     <td id="mHash">—</td></tr>
+  <tr><th>On-tag bytes (after 0x04 prefix)</th> <td id="mTag">—</td></tr>
+  <tr><th>Tap time @53 kbit/s</th>         <td id="mTap">—</td></tr>
+  <tr><th>ST25DV64K headroom (8192 B)</th> <td id="mHead">—</td></tr>
 </table>
 
-<h2>Decoded payload preview</h2>
-<pre id="preview">—</pre>
+<!-- ruler mode ------------------------------------------------------------ -->
+<div id="secRuler" class="hide">
+  <h2>Ruler probe</h2>
+  <table>
+    <tr><th>Last intact position marker</th> <td id="mMark">—</td></tr>
+    <tr><th>SHA-256 of decoded data</th>     <td id="mHash">—</td></tr>
+  </table>
+  <h2>Decoded payload preview</h2>
+  <pre id="preview">—</pre>
+</div>
 
 <h2>Environment</h2>
 <table>
@@ -110,7 +206,19 @@
   <span class="note" id="copyNote"></span>
 </div>
 
-<h2>Generate a test URL</h2>
+<h2>Load a known payload</h2>
+<div class="row">
+  <button class="ghost" id="btnGolden">Golden vector (70)</button>
+  <button class="ghost" id="btnReal1">Real log (1024)</button>
+  <button class="ghost" id="btnReal2">Real log + fault (1024)</button>
+</div>
+<p class="note">
+  Three payloads with known-correct decodes, for checking the page against
+  <code>tldecode.ps1</code> without a board. This page decodes only — it has no encoder, so real
+  payloads always come from the logger.
+</p>
+
+<h2>Generate a ruler URL (fragment length probe)</h2>
 <div class="row">
   <label>Data bytes <input type="number" id="genN" value="1500" min="1" max="60000" step="100"></label>
   <button id="btnGen">Generate</button>
@@ -124,39 +232,59 @@
   <span class="note" id="genNote"></span>
 </div>
 <p class="note">
-  The data being encoded is a ruler of 6-character chunks <code>NNNNN.</code> where
-  <code>NNNNN</code> is the running byte count at that chunk's end. Base64 maps 4 characters onto
-  3 bytes, so a truncated fragment still decodes cleanly up to its last whole group — and the tail
-  of the decoded ruler then states its own surviving length.
+  The ruler is 6-character chunks <code>NNNNN.</code> where <code>NNNNN</code> is the running byte
+  count at that chunk's end. Base64 maps 4 characters onto 3 bytes, so a truncated fragment still
+  decodes cleanly up to its last whole group — and the tail of the decoded ruler then states its
+  own surviving length. That self-describing property is why the ruler is kept: a tempcomp
+  payload cannot do it.
+</p>
+
+<h2>Self-test</h2>
+<div class="banner" id="selftest">—</div>
+<p class="note">
+  The decoder is checked against an embedded 70-sample vector and its known output, in this
+  browser, on load. The vector exercises every code path: small deltas, a 32-sample zero-delta
+  run, two faults, both clamp limits, a jump wide enough to force the escape option, and a
+  negative ramp.
 </p>
 
 <script>
 "use strict";
 
+/* ===== S1  helpers ==================================================== */
+
 var $ = function (id) { return document.getElementById(id); };
 
-function pad5(n) { var s = String(n); while (s.length < 5) { s = "0" + s; } return s; }
+function set(id, text, cls) {
+  var e = $(id);
+  if (!e) { return; }
+  e.textContent = text;
+  e.className = cls || "";
+}
+function show(id, on) { $(id).className = on ? "" : "hide"; }
 
-// 6-char self-describing chunks: "00006.00012.00018." ... truncated to exactly n chars.
-function makeRuler(n) {
-  var out = [], i = 6, len = 0;
-  while (len < n) { out.push(pad5(i) + "."); len += 6; i += 6; }
-  return out.join("").slice(0, n);
+function hex4(v) { return ("000" + v.toString(16).toUpperCase()).slice(-4); }
+
+/* tenths of a degree -> "26.9", or "n/a" for a fault */
+function t1(v) {
+  if (v === FAULT) { return "n/a"; }
+  var s = v < 0 ? "-" : "", a = Math.abs(v);
+  return s + Math.floor(a / 10) + "." + (a % 10);
 }
 
-// Value of the last chunk whose marker still agrees with its own offset.
-function lastIntactMarker(s) {
-  var re = /(\d{5})\./g, m, best = null;
-  while ((m = re.exec(s)) !== null) {
-    if (parseInt(m[1], 10) === m.index + 6) { best = m.index + 6; }
-  }
-  return best;
+/* seconds -> human duration */
+function dur(s) {
+  if (s < 120) { return s + " s"; }
+  if (s < 7200) { return (s / 60).toFixed(s < 600 ? 1 : 0) + " min"; }
+  return (s / 3600).toFixed(1) + " h";
 }
 
 function utf8Bytes(s) {
   if (window.TextEncoder) { return new TextEncoder().encode(s).length; }
   return unescape(encodeURIComponent(s)).length; // legacy fallback
 }
+
+/* ===== S2  base64 — carried over unchanged from the fragment probe ===== */
 
 function b64encode(binStr, urlSafe) {
   var b = btoa(binStr);
@@ -189,8 +317,251 @@ function b64decode(s) {
   var arr = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) { arr[i] = bin.charCodeAt(i) & 0xff; }
   out.bytes = arr;
-  out.text = bin; // ruler data is ASCII, so the binary string is the text
+  out.text = bin;
   return out;
+}
+
+/* ===== S3  CRC-16/CCITT-FALSE ========================================== */
+/* poly 0x1021, init 0xFFFF, no reflection, no final xor. Bitwise: a 512-byte
+   table would cost more than the whole decoder and save nothing measurable. */
+
+function crc16(bytes, len) {
+  var crc = 0xFFFF;
+  for (var i = 0; i < len; i++) {
+    crc ^= bytes[i] << 8;
+    for (var j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? (((crc << 1) ^ 0x1021) & 0xFFFF) : ((crc << 1) & 0xFFFF);
+    }
+  }
+  return crc;
+}
+
+/* ===== S4  bit reader, MSB-first ======================================= */
+
+/* The encoder never picks an option costlier than the escape, so a quotient
+   cannot exceed block_size * 13 bits. Anything longer is corruption — and
+   without this cap a bad payload would spin forever and hang the phone. */
+var UNARY_CAP = 1024;
+
+function BitReader(bytes, off) { this.b = bytes; this.pos = off; this.bit = 0; }
+
+BitReader.prototype.read = function (n) {
+  var v = 0;
+  for (var i = 0; i < n; i++) {
+    if (this.pos >= this.b.length) { throw new Error("payload ran off the end of the blob"); }
+    v = (v << 1) | ((this.b[this.pos] >> (7 - this.bit)) & 1);
+    this.bit++;
+    if (this.bit === 8) { this.bit = 0; this.pos++; }
+  }
+  return v;
+};
+
+BitReader.prototype.unary = function () {
+  var q = 0;
+  while (this.read(1) === 0) {
+    q++;
+    if (q > UNARY_CAP) { throw new Error("unary run exceeded " + UNARY_CAP + " bits — corrupt stream"); }
+  }
+  return q;
+};
+
+BitReader.prototype.align = function () { if (this.bit) { this.bit = 0; this.pos++; } };
+
+/* ===== S5  container parser ============================================ */
+/* Pure function: bytes in, plain object out, no DOM. The self-test exercises
+   this exact path, which is only meaningful because it touches nothing else. */
+
+var MAGIC_B64   = "VEwB";   // 'T','L',0x01 — the whole detection rule
+var FAULT       = -2048;
+var OPT_KMAX    = 12;
+var OPT_ZERO    = 13;
+var OPT_ESC     = 14;
+var ESC_BITS    = 13;
+var HEADER_LEN  = 16;
+var TRAILER_LEN = 2;
+
+function signext(v, bits) { return (v & (1 << (bits - 1))) ? v - (1 << bits) : v; }
+function unzig(u) { return (u >>> 1) ^ -(u & 1); }
+
+function parseContainer(bytes, allowBadCrc) {
+  var r = {
+    ok: false, error: null, crcOk: false, degraded: false, truncated: false,
+    version: 0, scheme: 0, count: 0, intervalS: 0, firstIndex: 0, block: 0,
+    values: [], faults: [], blockStats: {},
+    size: { header: HEADER_LEN, payload: 0, faults: 0, crc: TRAILER_LEN, total: bytes.length }
+  };
+
+  if (bytes.length < HEADER_LEN + TRAILER_LEN) {
+    r.error = "blob is " + bytes.length + " bytes, shorter than an empty container";
+    return r;
+  }
+
+  // CRC before anything else is trusted.
+  var want = bytes[bytes.length - 2] | (bytes[bytes.length - 1] << 8);
+  var got  = crc16(bytes, bytes.length - 2);
+  r.crcOk = (got === want);
+  r.crcWant = want;
+  r.crcGot = got;
+  if (!r.crcOk && !allowBadCrc) {
+    r.error = "CRC mismatch: computed 0x" + hex4(got) + ", blob carries 0x" + hex4(want);
+    return r;
+  }
+  r.degraded = !r.crcOk;
+
+  if (bytes[0] !== 0x54 || bytes[1] !== 0x4C) { r.error = "bad magic"; return r; }
+
+  r.version = bytes[2];
+  if (r.version !== 1) {
+    r.error = "format version " + r.version + " — this page only knows version 1";
+    return r;
+  }
+  r.scheme = bytes[3];
+  if (r.scheme !== 0 && r.scheme !== 1) { r.error = "unknown scheme " + r.scheme; return r; }
+
+  r.count      = bytes[4] | (bytes[5] << 8);
+  r.intervalS  = bytes[6] | (bytes[7] << 8);
+  r.firstIndex = (bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24)) >>> 0;
+
+  var bps = bytes[12];
+  if (bps !== 12) { r.error = "bits_per_sample " + bps + " — this page only handles 12"; return r; }
+  r.block = 1 << bytes[13];
+  if (bytes[14] !== 0) { r.error = "unknown scale_code " + bytes[14]; return r; }
+
+  var br = new BitReader(bytes, HEADER_LEN);
+  var vals = [], stats = {}, i, j, m, opt, q, rem, prev;
+
+  try {
+    if (r.scheme === 0) {
+      for (i = 0; i < r.count; i++) { vals.push(signext(br.read(12), 12)); }
+    } else if (r.count > 0) {
+      prev = signext(br.read(12), 12);
+      vals.push(prev);
+      while (vals.length < r.count) {
+        m = Math.min(r.block, r.count - vals.length);
+        opt = br.read(4);
+        if (opt === 15) { throw new Error("reserved block option 15"); }
+        stats[opt] = (stats[opt] || 0) + 1;
+        if (opt === OPT_ZERO) {
+          for (j = 0; j < m; j++) { vals.push(prev); }
+        } else if (opt === OPT_ESC) {
+          for (j = 0; j < m; j++) { prev += unzig(br.read(ESC_BITS)); vals.push(prev); }
+        } else {
+          for (j = 0; j < m; j++) {
+            q = br.unary();
+            rem = opt ? br.read(opt) : 0;
+            prev += unzig((q << opt) | rem);
+            vals.push(prev);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // A verified blob must decode. An unverified one may simply have been cut,
+    // and everything decoded before the cut is still correct.
+    if (!r.degraded) { r.error = e.message; return r; }
+    r.truncated = true;
+  }
+
+  r.values = vals;
+  br.align();
+  r.size.payload = br.pos - HEADER_LEN;
+
+  // The fault list lives after the payload, so a truncated blob has lost it.
+  // Only read it when the CRC vouched for the whole thing.
+  if (!r.degraded) {
+    var pos = br.pos;
+    if (pos + 2 > bytes.length - TRAILER_LEN) { r.error = "blob ends before the fault section"; return r; }
+    var nf = bytes[pos] | (bytes[pos + 1] << 8);
+    pos += 2;
+    if (pos + 2 * nf !== bytes.length - TRAILER_LEN) {
+      r.error = "fault section claims " + nf + " entries but "
+              + (bytes.length - TRAILER_LEN - pos) + " bytes remain";
+      return r;
+    }
+    for (i = 0; i < nf; i++) {
+      var idx = bytes[pos] | (bytes[pos + 1] << 8);
+      pos += 2;
+      if (idx >= r.count) { r.error = "fault index " + idx + " is past the end"; return r; }
+      r.faults.push(idx);
+      vals[idx] = FAULT;
+    }
+    r.size.faults = 2 + 2 * nf;
+  }
+
+  r.blockStats = stats;
+  r.ok = true;
+  return r;
+}
+
+/* ===== S6  golden vector and self-test ================================= */
+
+var GOLDEN_B64 =
+  "VEwBAUYACgAAAAAADAUAAA3BV6JeAAAACqqqqqqqpgCAIAgCAIAgCAIAgCAg" +
+  "D8wAB_QD-4AyuBoGgaBoGgaBoGgaBoGgaBoGgaBiZmZgAgAqAC8AiCM";
+
+var GOLDEN = [
+  220, 221, 221, 220, 219, 220, 222, 223, 222, 221,
+  250, 250, 250, 250, 250, 250, 250, 250, 250, 250,
+  250, 250, 250, 250, 250, 250, 250, 250, 250, 250,
+  250, 250, 250, 250, 250, 250, 250, 250, 250, 250,
+  250, 250, -2048, 251, -2047, 2046, 0, -2048, -150, -147,
+  -144, -141, -138, -135, -132, -129, -126, -123, -120, -117,
+  -114, -111, -108, -105, -102, -99, -96, -93, -90, -87
+];
+
+/* Real dumps, verified byte-for-byte against the host model. Three independent
+   series beats one: the golden vector reaches every code path, but a bug it
+   does not happen to touch would otherwise go unseen. */
+var REAL_1 = "VEwBAQAEAQAUAAAADAUAABDQnTT_9L5uGf__T6fh_Z6U75vw__6f3mmH__p_" +
+             "_KBv6fylKb-E3lOn_9nQP____8P9nT__T6H____lMKX53n_vwPSz0_vn2GU" +
+             "s9-WUp-kPs-5-n7KBT__-lP8P_6U__8C____L8Nz____h_9zT__hp6f___h" +
+             "__m__zB5c3___h6fT___h-Upf-n7wy_-n-n-H____poS8v_7-UsP_0___Ia" +
+             "Up_-aX-QebP_Sz_w__p__LgAACawA";
+
+var REAL_2 = "VEwBAQAEAQB0DgAADAUAABDt0P__yy_8P___p_7of___6fD_0___-h6af_T_" +
+             "_Q_p___-H____0wSn____90P_T___6H____yw-WUv-aXLw5eX-WXm-Gb__L" +
+             "_5QlPS_-adPQKXNnTS5Z_QL_-U3PSmkNKWdLKblzcgmmmy5Sy80pQ_l-X_L" +
+             "nQ_l_8pZpsgm8ss6bP08Pp_T6em8h6U9ynZ_SgAQD1A3cD";
+
+function selfTest() {
+  var d, p, i;
+  try {
+    d = b64decode(GOLDEN_B64);
+    if (d.error) { return { ok: false, msg: "FAIL — base64: " + d.error }; }
+    p = parseContainer(d.bytes, false);
+    if (!p.ok) { return { ok: false, msg: "FAIL — " + p.error }; }
+    if (p.values.length !== GOLDEN.length) {
+      return { ok: false, msg: "FAIL — decoded " + p.values.length + " samples, expected " + GOLDEN.length };
+    }
+    for (i = 0; i < GOLDEN.length; i++) {
+      if (p.values[i] !== GOLDEN[i]) {
+        return { ok: false, msg: "FAIL — sample " + i + ": got " + p.values[i] + ", expected " + GOLDEN[i] };
+      }
+    }
+    return { ok: true, msg: "PASS — the 70-sample reference vector decodes exactly in this browser" };
+  } catch (e) {
+    return { ok: false, msg: "FAIL — threw: " + e.message };
+  }
+}
+
+/* ===== S7  ruler path — carried over unchanged ========================= */
+
+function pad5(n) { var s = String(n); while (s.length < 5) { s = "0" + s; } return s; }
+
+// 6-char self-describing chunks: "00006.00012.00018." ... truncated to exactly n chars.
+function makeRuler(n) {
+  var out = [], i = 6, len = 0;
+  while (len < n) { out.push(pad5(i) + "."); len += 6; i += 6; }
+  return out.join("").slice(0, n);
+}
+
+// Value of the last chunk whose marker still agrees with its own offset.
+function lastIntactMarker(s) {
+  var re = /(\d{5})\./g, m, best = null;
+  while ((m = re.exec(s)) !== null) {
+    if (parseInt(m[1], 10) === m.index + 6) { best = m.index + 6; }
+  }
+  return best;
 }
 
 // FNV-1a 32-bit, used only when crypto.subtle is unavailable (non-secure context).
@@ -221,39 +592,152 @@ function preview(s) {
   return s.slice(0, 48) + "\n  … " + (s.length - 96) + " bytes omitted …\n" + s.slice(-48);
 }
 
-var report = {};
+/* ===== S10  chart ====================================================== */
+/* Built as one string and assigned once, so the whole chart is a pure
+   function of the parsed data. Colours come from the CSS custom properties,
+   which is why both themes work with no code here. */
 
-function render() {
-  var raw = location.hash.slice(1);
-  var dec = b64decode(raw);
-  var nBytes = dec.bytes ? dec.bytes.length : 0;
+var CH_W = 600, CH_H = 220, CH_L = 46, CH_R = 8, CH_T = 10, CH_B = 24;
+var DOWNSAMPLE_ABOVE = 2000;
+var MIN_SPAN_TENTHS = 10;      // 1.0 degC — below this a flat log reads as noise
 
-  $("bigNum").textContent = raw.length;
-  $("bigNum").className = "num" + (raw.length === 0 ? " empty" : "");
-  $("bigBytes").textContent = dec.error ? "decode failed" : nBytes;
-  $("bigBytes").className = "sub" + (dec.error ? " bad" : "");
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 
-  $("mRaw").textContent = raw.length;
-  $("mFragBytes").textContent = utf8Bytes(raw);
-  $("mAlpha").textContent = dec.alphabet;
-  $("mAlpha").className = /suspect/.test(dec.alphabet) ? "bad" : "";
+function chartSVG(values, intervalS, firstIndex) {
+  var pw = CH_W - CH_L - CH_R, ph = CH_H - CH_T - CH_B;
+  var n = values.length, i;
 
-  if (dec.error) {
-    $("mStatus").textContent = dec.error;
-    $("mStatus").className = "bad";
-  } else if (dec.dropped) {
-    $("mStatus").textContent = "ok — dropped " + dec.dropped + " char to align group";
-    $("mStatus").className = "warn";
-  } else if (raw.length) {
-    $("mStatus").textContent = "clean";
-    $("mStatus").className = "ok";
-  } else {
-    $("mStatus").textContent = "—";
-    $("mStatus").className = "";
+  var lo = null, hi = null;
+  for (i = 0; i < n; i++) {
+    if (values[i] === FAULT) { continue; }
+    if (lo === null || values[i] < lo) { lo = values[i]; }
+    if (hi === null || values[i] > hi) { hi = values[i]; }
+  }
+  if (lo === null) { return null; }   // every sample is a fault
+
+  var pad = Math.max((hi - lo) * 0.05, 0.5);
+  lo -= pad; hi += pad;
+  if (hi - lo < MIN_SPAN_TENTHS) {
+    var mid = (hi + lo) / 2;
+    lo = mid - MIN_SPAN_TENTHS / 2;
+    hi = mid + MIN_SPAN_TENTHS / 2;
   }
 
-  $("mBytes").textContent = dec.error ? "—" : nBytes;
-  $("mHref").textContent = location.href.length;
+  var X = function (k) { return CH_L + (n <= 1 ? 0 : pw * k / (n - 1)); };
+  var Y = function (v) { return CH_T + ph * (hi - v) / (hi - lo); };
+
+  var svg = [];
+  svg.push('<svg class="chart" viewBox="0 0 ' + CH_W + ' ' + CH_H + '" role="img" ' +
+           'aria-label="temperature over time">');
+
+  // gridlines and y labels
+  for (i = 0; i < 3; i++) {
+    var v = lo + (hi - lo) * i / 2, y = Y(v);
+    svg.push('<line class="grid" x1="' + CH_L + '" y1="' + y.toFixed(1) +
+             '" x2="' + (CH_W - CH_R) + '" y2="' + y.toFixed(1) + '"/>');
+    svg.push('<text x="' + (CH_L - 5) + '" y="' + (y + 3).toFixed(1) +
+             '" text-anchor="end">' + (v / 10).toFixed(1) + '</text>');
+  }
+  svg.push('<rect class="frame" x="' + CH_L + '" y="' + CH_T + '" width="' + pw + '" height="' + ph + '"/>');
+
+  // x labels
+  for (i = 0; i < 3; i++) {
+    var k = Math.round((n - 1) * i / 2);
+    var secs = (firstIndex + k) * intervalS;
+    var anchor = i === 0 ? "start" : (i === 2 ? "end" : "middle");
+    svg.push('<text x="' + X(k).toFixed(1) + '" y="' + (CH_H - 8) +
+             '" text-anchor="' + anchor + '">' + esc(dur(secs)) + '</text>');
+  }
+
+  // the trace: step-after, broken at every fault, never bridged
+  var d = [], open = false, gaps = [];
+  if (n > DOWNSAMPLE_ABOVE) {
+    // min/max per pixel column, so a one-sample spike cannot be decimated away
+    var cols = Math.min(pw, n);
+    for (var c = 0; c < cols; c++) {
+      var a = Math.floor(n * c / cols), b = Math.max(a + 1, Math.floor(n * (c + 1) / cols));
+      var mn = null, mx = null, any = false;
+      for (i = a; i < b && i < n; i++) {
+        if (values[i] === FAULT) { continue; }
+        any = true;
+        if (mn === null || values[i] < mn) { mn = values[i]; }
+        if (mx === null || values[i] > mx) { mx = values[i]; }
+      }
+      var x = CH_L + (cols <= 1 ? 0 : pw * c / (cols - 1));
+      if (!any) { gaps.push(x); open = false; continue; }
+      d.push((open ? "L" : "M") + x.toFixed(1) + "," + Y(mx).toFixed(1));
+      d.push("L" + x.toFixed(1) + "," + Y(mn).toFixed(1));
+      open = true;
+    }
+  } else {
+    var py = null;
+    for (i = 0; i < n; i++) {
+      if (values[i] === FAULT) { gaps.push(X(i)); open = false; py = null; continue; }
+      var x2 = X(i), y2 = Y(values[i]);
+      if (!open) { d.push("M" + x2.toFixed(1) + "," + y2.toFixed(1)); open = true; }
+      else { d.push("L" + x2.toFixed(1) + "," + py.toFixed(1));       // hold, then
+             d.push("L" + x2.toFixed(1) + "," + y2.toFixed(1)); }     // jump — step-after
+      py = y2;
+    }
+  }
+
+  // gap markers, capped so a heavily faulted log does not emit thousands of nodes
+  var gmax = Math.min(gaps.length, 400);
+  for (i = 0; i < gmax; i++) {
+    svg.push('<line class="gap" x1="' + gaps[i].toFixed(1) + '" y1="' + CH_T +
+             '" x2="' + gaps[i].toFixed(1) + '" y2="' + (CH_T + ph) + '"/>');
+  }
+
+  if (d.length) { svg.push('<path class="line" d="' + d.join(" ") + '"/>'); }
+  svg.push("</svg>");
+  return svg.join("");
+}
+
+/* ===== S9  render ====================================================== */
+
+var report = {};
+
+/* Every render clears everything first. hashchange re-renders in place, and a
+   failed parse must never leave numbers from the previous successful one on
+   screen. Resetting unconditionally here is cheaper than getting it right in
+   each branch. */
+function resetOutputs() {
+  var ids = ["bigNum", "bigSub", "mRaw", "mFragBytes", "mAlpha", "mStatus", "mBytes",
+             "mHref", "mNav", "mTag", "mTap", "mHead", "mMark", "mHash",
+             "cVer", "cCount", "cInterval", "cFirst", "cSpan", "cCrc", "cBytes",
+             "kRatio", "kBits", "dMin", "dMax", "dMean", "dSpan", "dFaults"];
+  for (var i = 0; i < ids.length; i++) { set(ids[i], "—"); }
+  set("bigNum", "—", "num");
+  set("bigSub", "—", "sub");
+  $("bigNumLbl").innerHTML = "base64 characters after <code>#</code>";
+  $("bigSubLbl").textContent = "decoded data bytes";
+  $("chart").innerHTML = "";
+  set("chartNote", "");
+  $("tBlocks").innerHTML = "<tr><th>—</th><td>—</td></tr>";
+  $("preview").textContent = "—";
+  show("secChart", false);
+  show("secContainer", false);
+  show("secRuler", false);
+  show("degradeRow", false);
+  report = {};
+}
+
+function banner(text, cls) { set("banner", text, "banner" + (cls ? " " + cls : "")); }
+
+function renderTransport(raw, dec) {
+  var nBytes = (dec && dec.bytes) ? dec.bytes.length : 0;
+
+  set("mRaw", raw.length);
+  set("mFragBytes", utf8Bytes(raw));
+  set("mAlpha", dec ? dec.alphabet : "—", dec && /suspect/.test(dec.alphabet) ? "bad" : "");
+
+  if (!dec || !raw.length)   { set("mStatus", "—"); }
+  else if (dec.error)        { set("mStatus", dec.error, "bad"); }
+  else if (dec.dropped)      { set("mStatus", "ok — dropped " + dec.dropped + " char to align group", "warn"); }
+  else                       { set("mStatus", "clean", "ok"); }
+
+  set("mBytes", (dec && dec.error) ? "—" : nBytes);
+  set("mHref", location.href.length);
 
   var navLen = "n/a";
   try {
@@ -261,41 +745,195 @@ function render() {
     if (nav && nav.name) { navLen = nav.name.length; }
   } catch (e) { /* not supported */ }
   if (navLen !== "n/a" && navLen !== location.href.length) {
-    $("mNav").textContent = navLen + "  ≠ full URL length";
-    $("mNav").className = "bad";
+    set("mNav", navLen + "  ≠ full URL length", "bad");
   } else {
-    $("mNav").textContent = navLen;
-    $("mNav").className = "";
+    set("mNav", navLen);
   }
 
-  var mark = lastIntactMarker(dec.text);
-  $("mMark").textContent = mark === null ? "none found" : mark;
+  // The NDEF URI record's 0x04 prefix stands in for "https://".
+  var onTag = Math.max(0, location.href.length - 8);
+  set("mTag", onTag + " B");
+  set("mTap", (onTag * 8 / 53000 * 1000).toFixed(0) + " ms");
+  set("mHead", (8192 - onTag) + " B free of 8192  (" + (onTag * 100 / 8192).toFixed(1) + " % used)");
 
-  $("preview").textContent = !raw.length ? "(no fragment — append #… to the URL)"
-                           : dec.error ? "(cannot decode)"
-                           : preview(dec.text);
-
-  $("eUA").textContent = navigator.userAgent;
-  $("eScreen").textContent = screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x";
-  $("eCharset").textContent = document.characterSet || "?";
-  $("eRef").textContent = document.referrer || "(none)";
-
-  report = {
-    chars: raw.length,
-    bytes: dec.error ? "decode-failed" : nBytes,
-    alphabet: dec.alphabet,
-    status: dec.error || (dec.dropped ? "dropped-" + dec.dropped : "clean"),
-    href: location.href.length,
-    nav: navLen,
-    marker: mark === null ? "none" : mark,
-    hash: "…"
-  };
-
-  hash(dec.bytes, function (h) {
-    $("mHash").textContent = h;
-    report.hash = h;
-  });
+  report.chars = raw.length;
+  report.bytes = (dec && dec.error) ? "decode-failed" : nBytes;
+  report.alphabet = dec ? dec.alphabet : "—";
+  report.href = location.href.length;
+  report.nav = navLen;
 }
+
+function renderContainer(raw, dec) {
+  var p = parseContainer(dec.bytes, $("degrade").checked);
+
+  if (!p.ok) {
+    banner(p.error, "bad");
+    // The CRC is the only failure the degraded path can help with.
+    if (/CRC mismatch/.test(p.error)) { show("degradeRow", true); }
+    report.mode = "tempcomp";
+    report.status = p.error;
+    return;
+  }
+
+  show("secContainer", true);
+
+  if (p.degraded) {
+    show("degradeRow", true);
+    banner("CRC FAILED — showing unverified data. " +
+           (p.truncated
+              ? p.values.length + " of " + p.count + " samples arrived before the payload ran out."
+              : "The payload decoded fully, so this looks like corruption rather than truncation.") +
+           " Samples decoded before a cut are correct; a bit-flip corrupts everything after it.",
+           "bad");
+  } else {
+    banner("clean — CRC 0x" + hex4(p.crcGot) + " verified", "ok");
+  }
+
+  var n = p.values.length, i;
+  var lo = null, hi = null, sum = 0, valid = 0;
+  for (i = 0; i < n; i++) {
+    if (p.values[i] === FAULT) { continue; }
+    if (lo === null || p.values[i] < lo) { lo = p.values[i]; }
+    if (hi === null || p.values[i] > hi) { hi = p.values[i]; }
+    sum += p.values[i];
+    valid++;
+  }
+
+  // headline: what the log says, not how many bytes it took
+  set("bigNum", n, "num");
+  $("bigNumLbl").textContent = p.degraded ? "samples decoded (unverified)" : "samples";
+  set("bigSub", lo === null ? "no valid samples" : t1(lo) + " … " + t1(hi) + " °C", "sub");
+  $("bigSubLbl").textContent = "temperature range";
+
+  set("cVer", "v" + p.version + " / scheme " + p.scheme +
+              (p.scheme === 1 ? " (Rice)" : " (12-bit packed)"));
+  set("cCount", p.count + (p.values.length !== p.count
+        ? "  — only " + p.values.length + " decoded" : ""),
+      p.values.length !== p.count ? "bad" : "");
+  set("cInterval", p.intervalS + " s");
+  set("cFirst", p.firstIndex);
+  set("cSpan", n > 1 ? dur((n - 1) * p.intervalS) : "—");
+  set("cCrc", p.crcOk ? "0x" + hex4(p.crcGot) + " — verified"
+                      : "0x" + hex4(p.crcGot) + " computed, 0x" + hex4(p.crcWant) + " carried",
+      p.crcOk ? "ok" : "bad");
+  set("cBytes", p.size.total + " B = " + p.size.header + " header + " + p.size.payload +
+                " payload + " + p.size.faults + " faults + " + p.size.crc + " CRC");
+
+  // compression — one ratio, one rate, both defined in REBUILD-PLAN section 7
+  if (n > 0) {
+    set("kRatio", (n * 2) + " B → " + p.size.total + " B  =  " +
+                  (n * 2 / p.size.total).toFixed(1) + "×");
+    set("kBits", (p.size.payload * 8 / n).toFixed(2) + " bits/sample");
+  }
+
+  set("dMin", lo === null ? "—" : t1(lo) + " °C");
+  set("dMax", hi === null ? "—" : t1(hi) + " °C");
+  set("dMean", valid ? (sum / valid / 10).toFixed(2) + " °C" : "—");
+  set("dSpan", lo === null ? "—" : ((hi - lo) / 10).toFixed(1) + " °C");
+  set("dFaults", p.faults.length === 0 ? "none"
+        : p.faults.length + " at index " + p.faults.slice(0, 24).join(", ") +
+          (p.faults.length > 24 ? " …" : ""),
+      p.faults.length ? "warn" : "");
+
+  // block coding histogram
+  var rows = [], keys = [], k;
+  for (k in p.blockStats) { if (p.blockStats.hasOwnProperty(k)) { keys.push(parseInt(k, 10)); } }
+  keys.sort(function (a, b) { return a - b; });
+  for (i = 0; i < keys.length; i++) {
+    k = keys[i];
+    var label = k === OPT_ZERO ? "zero block" : (k === OPT_ESC ? "escape (raw)" : "Rice k=" + k);
+    var cls = k === OPT_ESC ? ' class="warn"' : "";
+    rows.push("<tr><th>" + esc(label) + "</th><td" + cls + ">" + p.blockStats[k] + " blocks</td></tr>");
+  }
+  $("tBlocks").innerHTML = rows.length ? rows.join("") : "<tr><th>—</th><td>no blocks</td></tr>";
+
+  // chart
+  var svg = chartSVG(p.values, p.intervalS, p.firstIndex);
+  if (svg) {
+    show("secChart", true);
+    $("chart").innerHTML = svg;
+    set("chartNote",
+        "Stepped, because the data is quantised to 0.1 °C — a smooth line would imply readings "
+        + "that were never taken. " + (p.faults.length ? "Red bars mark faults; the trace breaks "
+        + "rather than bridging them. " : "")
+        + (n > DOWNSAMPLE_ABOVE ? "Downsampled min/max per column, so spikes survive. " : "")
+        + "Y axis is held to at least 1 °C.", "note");
+  } else if (n > 0) {
+    show("secChart", true);
+    $("chart").innerHTML = "";
+    set("chartNote", "Every sample in this log is a fault — nothing to plot.", "note bad");
+  }
+
+  report.mode = "tempcomp";
+  report.status = p.degraded ? "crc-failed-unverified" : "clean";
+  report.samples = n;
+  report.bits = n ? (p.size.payload * 8 / n).toFixed(2) : "—";
+  report.ratio = n ? (n * 2 / p.size.total).toFixed(1) : "—";
+  report.faults = p.faults.length;
+  report.marker = "—";
+  report.hash = "—";
+}
+
+function renderRuler(raw, dec) {
+  show("secRuler", true);
+
+  set("bigNum", raw.length, "num" + (raw.length === 0 ? " empty" : ""));
+  $("bigNumLbl").innerHTML = "base64 characters after <code>#</code>";
+  set("bigSub", dec.error ? "decode failed" : dec.bytes.length, "sub" + (dec.error ? " bad" : ""));
+  $("bigSubLbl").textContent = "decoded data bytes";
+
+  banner("ruler payload — fragment length probe, not a tempcomp container", "");
+
+  var mark = lastIntactMarker(dec.text);
+  set("mMark", mark === null ? "none found" : mark);
+  $("preview").textContent = dec.error ? "(cannot decode)" : preview(dec.text);
+
+  report.mode = "ruler";
+  report.status = dec.error || (dec.dropped ? "dropped-" + dec.dropped : "clean");
+  report.marker = mark === null ? "none" : mark;
+  report.samples = "—";
+  report.bits = "—";
+  report.ratio = "—";
+  report.faults = "—";
+  report.hash = "…";
+
+  hash(dec.bytes, function (h) { set("mHash", h); report.hash = h; });
+}
+
+function render() {
+  resetOutputs();
+
+  var raw = location.hash.slice(1);
+
+  set("eUA", navigator.userAgent);
+  set("eScreen", screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x");
+  set("eCharset", document.characterSet || "?");
+  set("eRef", document.referrer || "(none)");
+
+  if (!raw.length) {
+    renderTransport(raw, null);
+    banner("no fragment — append #… to the URL, or load a known payload below", "");
+    set("bigNum", "—", "num empty");
+    return;
+  }
+
+  var dec = b64decode(raw);
+  renderTransport(raw, dec);
+
+  if (dec.error) {
+    banner(dec.error, "bad");
+    set("bigNum", raw.length, "num");
+    set("bigSub", "decode failed", "sub bad");
+    return;
+  }
+
+  /* S8 — detection. A v1 blob always starts 'T','L',0x01, which base64-encodes
+     to exactly "VEwB". Anything else is a ruler payload. */
+  if (raw.slice(0, 4) === MAGIC_B64) { renderContainer(raw, dec); }
+  else                               { renderRuler(raw, dec); }
+}
+
+/* ===== S11  generator, canned payloads, copy — mostly carried over ===== */
 
 function copy(text, noteEl) {
   function done(ok) { noteEl.textContent = ok ? "copied" : "copy failed — select manually"; }
@@ -319,8 +957,9 @@ function copy(text, noteEl) {
 $("btnCopy").addEventListener("click", function () {
   var row = [
     new Date().toISOString(),
-    report.chars, report.bytes, report.alphabet, report.status,
-    report.href, report.nav, report.marker, report.hash,
+    report.mode || "—", report.chars, report.bytes, report.alphabet, report.status,
+    report.href, report.nav, report.samples, report.bits, report.ratio,
+    report.faults, report.marker, report.hash,
     navigator.userAgent
   ].join("\t");
   copy(row, $("copyNote"));
@@ -351,7 +990,20 @@ $("btnGenCopy").addEventListener("click", function () {
   if (genURL) { copy(genURL, $("genNote")); } else { $("genNote").textContent = "generate first"; }
 });
 
+function load(frag) {
+  $("degrade").checked = false;
+  if (location.hash.slice(1) === frag) { render(); } else { location.hash = frag; }
+}
+$("btnGolden").addEventListener("click", function () { load(GOLDEN_B64); });
+$("btnReal1").addEventListener("click", function () { load(REAL_1); });
+$("btnReal2").addEventListener("click", function () { load(REAL_2); });
+
+$("degrade").addEventListener("change", render);
 window.addEventListener("hashchange", render);
+
+var st = selfTest();
+set("selftest", st.msg, "banner " + (st.ok ? "ok" : "bad"));
+
 render();
 generate();
 </script>
