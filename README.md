@@ -1,4 +1,4 @@
-# NFCtest
+# NFCTest
 
 A single-page tool that does two things from a URL fragment, auto-detecting which:
 
