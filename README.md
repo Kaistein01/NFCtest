@@ -23,7 +23,7 @@ mock inside the page.
 |---|---|
 | **Sending Site** | Device health, the Device ID, the latest temperature, when it was measured, the logging interval |
 | **Receiving Site** | An email field and **Confirm Reception**; the shipment's data from the server; max and min with their times. After confirming: the **alarm status** |
-| **Details** | The full history chart, CRC verification, bits per sample, missing readings, when the logger started, user agent, screen, data source and the decoder's self-test |
+| **Details** | The full history chart, CRC verification, bits per sample, the number of samples on the tag, missing readings, when the logger started, user agent, screen, data source and the decoder's self-test |
 
 **Device health** is red when something fails *now* — the logger has stopped (no new reading
 for more than two intervals), the log is unreadable, or the latest reading is a sensor fault —
@@ -88,7 +88,7 @@ demo URL out of `demo/demo-url.txt`, into `tools/harness.js`, and runs it under 
 What is tested is the source that ships. It also parses the whole page script — so the page must
 stay ES3 — and fails if a company name appears in any file of this public repository.
 
-**160 checks**: the reference vectors; every ring case (ordering, gaps, damage, empty and fresh
+**162 checks**: the reference vectors; every ring case (ordering, gaps, damage, empty and fresh
 logs, overflow, truncation, rejections) as v2 and again as v3; the URL; times, the stale and
 future thresholds and every "Last Measurement" wording; statistics and the confirmation window;
 alarm, health and missing readings; demo mode and the full demo URL; the chart and its options.

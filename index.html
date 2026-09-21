@@ -819,8 +819,10 @@ function summarize(ring, nowMs, shipment, confirmation, demo) {
     : "FAIL — " + ring.segDamaged + " of " + ring.present + " segments damaged, skipped";
   m.bitsText = n ? (ring.size.payload * 8 / n).toFixed(2) : "—";
   m.startText = tb.mode === "estimated" ? "not recorded (old format)" : fmtUTC(m.start);
-  m.samplesText = n + " kept" + (ring.overwritten > 0
-    ? ", " + ring.overwritten + " earlier no longer on the tag (" +
+  /* The number of readings on the tag. Only when the ring has wrapped does a
+     second figure appear: the older readings that are no longer there. */
+  m.samplesText = String(n) + (ring.overwritten > 0
+    ? " on the tag; " + ring.overwritten + " older readings no longer on it (" +
       fmtShort(at(0)) + " – " + fmtShort(at(ring.overwritten - 1)) + ")"
     : "");
   return m;

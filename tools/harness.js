@@ -279,7 +279,8 @@ ok("no start time: amber", est.health.state === "warn" && est.health.text === "L
 ok("no start time: never stale", !summarize(mkRing(flat(10, 200), { start: null }), tLast + 99 * IMS, SHIP, null, false).stale);
 
 var ov = summarize(mkRing(flat(10, 200), { first: 500 }), (S + 509 * I) * 1000, SHIP, null, false);
-ok("overflow as a time range", ov.samplesText === "10 kept, 500 earlier no longer on the tag (" +
+ok("no overflow: just the count", summarize(ten, tLast, SHIP, null, false).samplesText === "10");
+ok("overflow as a time range", ov.samplesText === "10 on the tag; 500 older readings no longer on it (" +
    fmtShort(S * 1000) + " – " + fmtShort((S + 499 * I) * 1000) + ")", ov.samplesText);
 ok("start time shown", ov.startText === fmtUTC(S * 1000));
 
@@ -358,6 +359,7 @@ var dr = parseRing(bytesOf(dl.frag));
 ok("demo URL: decodes", dr.ok, dr.error);
 if (dr.ok) {
   ok("demo URL: 10,500 readings", dr.values.length === 10500, "got " + dr.values.length);
+  ok("demo URL: Details shows 10500 samples", summarize(dr, NOW, SHIP, null, true).samplesText === "10500");
   ok("demo URL: 9 of 9 segments - about half the tag - none damaged", dr.segOk === 9 && dr.present === 9 && dr.segDamaged === 0);
   ok("demo URL: 15-minute interval", dr.intervalS === 900);
   var dm2 = summarize(dr, NOW, SHIP, null, true);
