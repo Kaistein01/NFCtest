@@ -650,7 +650,11 @@ function parseRing(bytes) {
   }
 
   if (!list.length) {
-    r.error = "no readable segment: " + r.segDamaged + " damaged, " + r.segEmpty + " empty";
+    /* All empty and none damaged is not a fault: the logger has just started
+     * a fresh log (every reset does) and no sample has reached the tag yet. */
+    r.error = r.segDamaged === 0
+      ? "the log is empty - the logger has just started and no sample has reached the tag yet"
+      : "no readable segment: " + r.segDamaged + " damaged, " + r.segEmpty + " empty";
     return r;
   }
 

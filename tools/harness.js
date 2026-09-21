@@ -260,6 +260,11 @@ var emp = parseRing(buildRing([segAt(0), emptySeg], 0, false));
 ok("empty segment counted and skipped", emp.ok && emp.segEmpty === 1 && emp.values.length === 70,
    emp.error);
 
+/* A fresh log - one segment, no samples yet - says so, not "no readable". */
+var fresh = parseRing(buildRing([segAt(0, 0)], 0, false));
+ok("fresh log: reported as empty, not as damage",
+   !fresh.ok && /log is empty/.test(fresh.error), fresh.error);
+
 /* Overflow is derived from the oldest surviving index, not guessed. */
 var ovr = parseRing(buildRing([segAt(500), segAt(570)], 1, true));
 ok("overflow: 500 samples reported overwritten", ovr.ok && ovr.overwritten === 500,
