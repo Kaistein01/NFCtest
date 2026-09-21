@@ -1229,7 +1229,7 @@ function paintDetails(m, conf) {
   });
   if (svg) { $("chart").innerHTML = svg; }
 
-  note = "Stepped, because readings come in 0.1 °C steps. Times in UTC" +
+  note = "Times in UTC" +
          (m.mode === "estimated" ? ", estimated" : "") + ".";
   if (m.missing.length) { note += " Red lines mark missing readings."; }
   if (conf) { note += " The dashed line marks the reception confirmation."; }
