@@ -3,269 +3,197 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nfctest — tempcomp decoder &amp; fragment probe</title>
+<meta name="color-scheme" content="light">
+<title>LIBERO lite Read-Out</title>
 <!--
-  One file. No build, no dependencies, no network requests after load.
-  A page reached by tapping a tag may load on a bad connection in a warehouse;
-  a second request is a failure mode you cannot diagnose from there.
+  One file. No build, no dependencies, no network requests after load: a page
+  reached by tapping a tag may load on a bad connection in a warehouse, and a
+  second request is a failure mode you cannot diagnose from there. The shipment
+  "server" is a mock inside this file (section S10).
 
   Do NOT add YAML front matter. An empty .nojekyll beside this file disables
   Jekyll for the repository, so this is copied verbatim either way - but front
   matter would make Liquid interpret {{ ... }} inside the script.
 
-  Format spec: ../../COMPRESSION-PLAN.md section 6. Decode procedure: section 8.
-  Rebuild rationale: REBUILD-PLAN.md.
+  The whole script must stay ES3: tools/run-jstest.ps1 parses it under Windows'
+  JScript, and runs sections S1-S9 there. Plan: ../../LIBERO-LITE-PLAN.md.
 -->
 <style>
   :root {
-    --bg: #ffffff; --fg: #16181d; --muted: #656b7a;
-    --line: #dfe2e8; --card: #f5f6f8; --accent: #1a6fd4;
-    --ok: #17794a; --bad: #b3261e; --warn: #a1610b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14161a; --fg: #e8eaee; --muted: #9aa1b0;
-      --line: #2c3038; --card: #1c1f25; --accent: #63a4f0;
-      --ok: #4cc38a; --bad: #f2635a; --warn: #e0a83a;
-    }
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b72; --line: #e2e2e7; --soft: #f2f2f4;
+    --tab: #3563b9; --primary: #6a33d8; --primary-fg: #ffffff;
+    --ok: #2fbf5b; --warn: #eea21b; --bad: #de4338; --none: #b8b8c0;
+    --ok-text: #1d8a43; --warn-text: #a06a00; --bad-text: #c0342a;
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; padding: 16px 14px 48px;
-    background: var(--bg); color: var(--fg);
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    -webkit-text-size-adjust: 100%;
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
-  h1 { font-size: 15px; margin: 0 0 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-  h2 { font-size: 13px; margin: 26px 0 8px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-  .headline {
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 18px 16px; text-align: center;
-  }
-  .headline .num {
-    font: 700 clamp(40px, 16vw, 68px)/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-variant-numeric: tabular-nums; word-break: break-all;
-  }
-  .headline .sub {
-    font: 600 clamp(18px, 7vw, 28px)/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-variant-numeric: tabular-nums; margin-top: 10px; color: var(--accent);
-  }
-  .headline .lbl { color: var(--muted); font-size: 13px; margin-top: 5px; }
-  .empty { color: var(--bad); }
-  .banner {
-    margin-top: 12px; padding: 10px 12px; border-radius: 8px;
-    border: 1px solid var(--line); background: var(--card);
-    font: 600 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    word-break: break-word;
-  }
-  .banner.ok   { color: var(--ok);   border-color: var(--ok); }
-  .banner.bad  { color: var(--bad);  border-color: var(--bad); }
-  .banner.warn { color: var(--warn); border-color: var(--warn); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-weight: 400; color: var(--muted); width: 52%; }
-  td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-       font-variant-numeric: tabular-nums; word-break: break-all; }
-  .bad { color: var(--bad); }
-  .warn { color: var(--warn); }
-  .ok { color: var(--ok); }
-  pre {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px; margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
-    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  button {
-    font: inherit; font-weight: 600; color: #fff; background: var(--accent);
-    border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer;
-    -webkit-appearance: none; touch-action: manipulation;
-  }
-  button:active { opacity: .8; }
-  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-  input[type=number] {
-    font: inherit; padding: 10px; width: 8em; border-radius: 8px;
-    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
-    -webkit-appearance: none;
-  }
-  label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
-  .note { color: var(--muted); font-size: 13px; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .hide { display: none; }
+  .app { max-width: 480px; margin: 0 auto; padding: 0 16px 48px; }
+  .hide { display: none !important; }
 
-  /* chart */
-  .chartbox {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 10px; padding: 8px 8px 4px;
+  .top { position: relative; text-align: center; padding: 18px 44px 8px; font-size: 19px; }
+  .top svg { position: absolute; right: 2px; top: 13px; width: 32px; height: 32px; }
+
+  .tabs { display: flex; margin: 4px -6px 0; }
+  .tab {
+    flex: 1; -webkit-appearance: none; appearance: none; background: none; border: 0;
+    border-bottom: 3px solid transparent; padding: 12px 2px 9px; font: inherit;
+    font-size: 17px; color: #333; cursor: pointer; touch-action: manipulation;
   }
+  .tab.on { color: var(--tab); border-bottom-color: var(--tab); }
+
+  .pane { padding-top: 22px; }
+  .h1 { font-size: 22px; font-weight: 400; margin: 0 0 10px; text-align: center; }
+  .icon { display: block; margin: 0 auto; width: 124px; height: 112px; }
+  .icon.round { width: 150px; height: 150px; }
+  .reason { text-align: center; color: var(--muted); font-size: 15px; min-height: 1.45em; margin-top: 6px; }
+  .reason.bad { color: var(--bad-text); }
+  .reason.warn { color: var(--warn-text); }
+  .devid { text-align: center; font-size: 20px; letter-spacing: .02em; margin: 12px 0 26px; }
+  .temp {
+    text-align: center; font-weight: 300; line-height: 1; margin: 0 0 18px;
+    font-size: clamp(56px, 20vw, 88px); font-variant-numeric: tabular-nums;
+  }
+  .msg { text-align: center; font-size: 17px; margin: 26px 0; }
+  .msg.bad { color: var(--bad-text); }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; column-gap: 18px; row-gap: 3px; margin: 0; font-size: 14px; }
+  .kv dt { margin: 0; }
+  .kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .kv.center { width: max-content; max-width: 100%; margin: 0 auto; }
+  .h2 { font-size: 17px; font-weight: 400; margin: 26px 0 6px; }
+
+  .ask { text-align: center; }
+  .ask .label {
+    display: inline-block; background: var(--soft); padding: 2px 12px; margin: 10px 0 18px;
+    font-size: clamp(26px, 8vw, 34px);
+  }
+  .ask input {
+    display: block; width: 100%; font: inherit; font-size: 20px; text-align: center; color: var(--fg);
+    padding: 12px; border: 1px solid #444; border-radius: 0; background: var(--soft);
+    -webkit-appearance: none; appearance: none;
+  }
+  .ask input::placeholder { color: #a9a9ae; font-weight: 600; }
+  .hint { color: var(--bad-text); font-size: 14px; min-height: 1.4em; margin-top: 6px; }
+  .primary {
+    display: inline-block; margin: 26px auto 30px; min-width: 64%; padding: 14px 18px;
+    background: var(--primary); color: var(--primary-fg); border: 0; border-radius: 3px;
+    font: inherit; font-size: 20px; cursor: pointer; touch-action: manipulation;
+  }
+  .primary[disabled] { opacity: .6; cursor: default; }
+  .small { text-align: center; font-size: 14px; margin-bottom: 8px; }
+  .confirmed { text-align: center; font-size: 14px; color: var(--muted); margin: 8px 0 30px; }
+
+  .chartbox { border: 1px solid var(--line); border-radius: 8px; padding: 6px 6px 2px; }
   .chart { width: 100%; height: auto; display: block; }
   .chart .grid  { stroke: var(--line); stroke-width: 1; }
   .chart .frame { fill: none; stroke: var(--line); stroke-width: 1; }
-  .chart .line  { fill: none; stroke: var(--accent); stroke-width: 1.6;
-                  stroke-linejoin: round; stroke-linecap: round; }
-  .chart .gap   { stroke: var(--bad); stroke-width: 1.5; opacity: .55; }
-  .chart text   { fill: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .chart .line  { fill: none; stroke: var(--tab); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .gap   { stroke: var(--bad); stroke-width: 1.5; opacity: .5; }
+  .chart .mark  { stroke: var(--primary); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .chart text   { fill: var(--muted); font: 10px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .note { color: var(--muted); font-size: 13px; margin: 6px 0 18px; }
+  .details dt { color: var(--muted); }
+  .ok { color: var(--ok-text); }
+  .bad { color: var(--bad-text); }
+  .warn { color: var(--warn-text); }
+  .link {
+    background: none; border: 0; padding: 0; margin-top: 20px; font: inherit; font-size: 14px;
+    color: var(--tab); text-decoration: underline; cursor: pointer;
+  }
+  .linknote { color: var(--muted); font-size: 13px; margin-left: 8px; }
 </style>
 </head>
 <body>
+<div class="app">
 
-<h1>nfctest — tempcomp decoder &amp; fragment probe</h1>
+<header class="top">
+  LIBERO lite Read-Out
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <circle cx="16" cy="16" r="16" fill="#111"/>
+    <circle cx="16" cy="12.2" r="5.6" fill="#fff"/>
+    <path d="M6.3 25.6C8.8 20.2 23.2 20.2 25.7 25.6 23.1 28.5 19.8 30 16 30s-7.1-1.5-9.7-4.4z" fill="#fff"/>
+  </svg>
+</header>
 
-<div class="headline">
-  <div class="num" id="bigNum">—</div>
-  <div class="lbl" id="bigNumLbl">base64 characters after <code>#</code></div>
-  <div class="sub" id="bigSub">—</div>
-  <div class="lbl" id="bigSubLbl">decoded data bytes</div>
-</div>
+<nav class="tabs" role="tablist">
+  <button class="tab on" id="tabSend" role="tab" aria-selected="true" data-pane="paneSend">Sending Site</button>
+  <button class="tab" id="tabRecv" role="tab" aria-selected="false" data-pane="paneRecv">Receiving Site</button>
+  <button class="tab" id="tabDet" role="tab" aria-selected="false" data-pane="paneDet">Details</button>
+</nav>
 
-<div class="banner" id="banner">—</div>
+<!-- ============================ Sending Site ============================ -->
+<section class="pane" id="paneSend" role="tabpanel">
+  <div class="msg hide" id="sendMsg"></div>
+  <div id="healthBlock">
+    <h1 class="h1">Device Health</h1>
+    <div id="healthIcon"></div>
+    <div class="reason" id="healthReason"></div>
+  </div>
+  <div class="devid" id="sendId">&mdash;</div>
+  <div class="temp" id="sendTemp">&mdash;</div>
+  <dl class="kv center" id="sendKv">
+    <dt>Last Measurement:</dt><dd id="lastMeas">&mdash;</dd>
+    <dt>Logging interval:</dt><dd id="logInterval">&mdash;</dd>
+  </dl>
+</section>
 
-<div class="row hide" id="degradeRow" style="margin-top:10px">
-  <label><input type="checkbox" id="degrade">
-    decode anyway, ignoring the CRC — <strong>diagnostic only</strong></label>
-</div>
+<!-- =========================== Receiving Site =========================== -->
+<section class="pane hide" id="paneRecv" role="tabpanel">
+  <div class="msg hide" id="recvMsg"></div>
 
-<!-- container mode ------------------------------------------------------- -->
-<div id="secChart" class="hide">
-  <h2>Samples over time</h2>
+  <form class="ask hide" id="recvBefore" novalidate>
+    <div class="label">Type your Email</div>
+    <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="name@example.com">
+    <div class="hint" id="emailHint"></div>
+    <button class="primary" id="btnConfirm" type="submit">Confirm Reception</button>
+  </form>
+
+  <div class="hide" id="recvAfter">
+    <div class="small">Current Alarm Status:</div>
+    <div id="alarmIcon"></div>
+    <div class="reason" id="alarmReason"></div>
+    <div class="confirmed" id="confirmedLine"></div>
+  </div>
+
+  <dl class="kv" id="recvMeta">
+    <dt>Device Id:</dt><dd id="metaId">&mdash;</dd>
+    <dt>Shipment Id:</dt><dd id="metaShip">&mdash;</dd>
+    <dt>Sending Site / Country:</dt><dd id="metaSite">&mdash;</dd>
+    <dt>Product:</dt><dd id="metaProduct">&mdash;</dd>
+  </dl>
+
+  <div id="recvStats">
+    <h2 class="h2">Statistics</h2>
+    <dl class="kv">
+      <dt>Max Temp.:</dt><dd id="statMax">&mdash;</dd>
+      <dt>Min Temp.:</dt><dd id="statMin">&mdash;</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- =============================== Details ============================== -->
+<section class="pane hide" id="paneDet" role="tabpanel">
   <div class="chartbox"><div id="chart"></div></div>
   <p class="note" id="chartNote"></p>
+  <dl class="kv details">
+    <dt>CRC verification</dt><dd id="detCrc">&mdash;</dd>
+    <dt>Bits per sample</dt><dd id="detBits">&mdash;</dd>
+    <dt>User agent</dt><dd id="detUa">&mdash;</dd>
+    <dt>Screen</dt><dd id="detScreen">&mdash;</dd>
+    <dt>Logger started</dt><dd id="detStart">&mdash;</dd>
+    <dt>Samples</dt><dd id="detSamples">&mdash;</dd>
+    <dt>Missing readings</dt><dd id="detMissing">&mdash;</dd>
+    <dt>Data source</dt><dd id="detSource">&mdash;</dd>
+    <dt>Decoder self-test</dt><dd id="detSelf">&mdash;</dd>
+  </dl>
+  <button class="link" id="btnReset" type="button">Reset demo on this phone</button><span class="linknote" id="resetNote"></span>
+</section>
+
 </div>
-
-<!-- cyclic buffer, v2 only ------------------------------------------------ -->
-<div id="secRing" class="hide">
-  <h2>Cyclic buffer</h2>
-  <table>
-    <tr><th>Segments</th>       <td id="gSegs">—</td></tr>
-    <tr><th>Newest sample</th>  <td id="gNewest">—</td></tr>
-    <tr><th>Overflow</th>       <td id="gWrap">—</td></tr>
-    <tr><th>Segment map</th>    <td id="gMap">—</td></tr>
-  </table>
-  <p class="note">
-    The log is written round and round a fixed set of segments, overwriting the oldest when it
-    runs out of room. Each segment carries the sample index it starts at and its own CRC, so the
-    order on the tag is not the order in time, a damaged segment costs only itself, and the
-    oldest surviving index says exactly how many samples have been overwritten. In the map,
-    <code>#</code> is the segment being written now, <code>=</code> holds data, <code>·</code> is
-    unused and <code>X</code> failed its CRC.
-  </p>
-</div>
-
-<div id="secContainer" class="hide">
-  <h2>Container</h2>
-  <table>
-    <tr><th>Version / scheme</th>      <td id="cVer">—</td></tr>
-    <tr><th>Samples</th>               <td id="cCount">—</td></tr>
-    <tr><th>Sampling interval</th>     <td id="cInterval">—</td></tr>
-    <tr><th>First absolute index</th>  <td id="cFirst">—</td></tr>
-    <tr><th>Covered time span</th>     <td id="cSpan">—</td></tr>
-    <tr><th>CRC-16/CCITT-FALSE</th>    <td id="cCrc">—</td></tr>
-    <tr><th>Byte breakdown</th>        <td id="cBytes">—</td></tr>
-  </table>
-
-  <h2>Compression</h2>
-  <table>
-    <tr><th>vs raw int16 (samples × 2 B)</th> <td id="kRatio">—</td></tr>
-    <tr><th>Bits per sample (payload only)</th> <td id="kBits">—</td></tr>
-  </table>
-
-  <h2>Data</h2>
-  <table>
-    <tr><th>Minimum</th>      <td id="dMin">—</td></tr>
-    <tr><th>Maximum</th>      <td id="dMax">—</td></tr>
-    <tr><th>Mean</th>         <td id="dMean">—</td></tr>
-    <tr><th>Span</th>         <td id="dSpan">—</td></tr>
-    <tr><th>Faults</th>       <td id="dFaults">—</td></tr>
-  </table>
-
-  <h2>Block coding</h2>
-  <table id="tBlocks"><tr><th>—</th><td>—</td></tr></table>
-  <p class="note">
-    Which option each 32-sample block chose. <code>zero</code> means every delta in the block was
-    zero. <code>escape</code> means the block was too noisy to code and was stored raw — in a
-    normal log that is worth investigating.
-  </p>
-</div>
-
-<!-- transport, both modes ------------------------------------------------ -->
-<h2>Transport</h2>
-<table>
-  <tr><th>Fragment chars (raw)</th>        <td id="mRaw">—</td></tr>
-  <tr><th>Fragment bytes (UTF-8)</th>      <td id="mFragBytes">—</td></tr>
-  <tr><th>Base64 alphabet</th>             <td id="mAlpha">—</td></tr>
-  <tr><th>Base64 decode</th>               <td id="mStatus">—</td></tr>
-  <tr><th>Decoded data bytes</th>          <td id="mBytes">—</td></tr>
-  <tr><th>Full URL length</th>             <td id="mHref">—</td></tr>
-  <tr><th>Navigation-entry URL length</th> <td id="mNav">—</td></tr>
-  <tr><th>On-tag bytes (after 0x04 prefix)</th> <td id="mTag">—</td></tr>
-  <tr><th>Tap time @53 kbit/s</th>         <td id="mTap">—</td></tr>
-  <tr><th>ST25DV64K headroom (8192 B)</th> <td id="mHead">—</td></tr>
-</table>
-
-<!-- ruler mode ------------------------------------------------------------ -->
-<div id="secRuler" class="hide">
-  <h2>Ruler probe</h2>
-  <table>
-    <tr><th>Last intact position marker</th> <td id="mMark">—</td></tr>
-    <tr><th>SHA-256 of decoded data</th>     <td id="mHash">—</td></tr>
-  </table>
-  <h2>Decoded payload preview</h2>
-  <pre id="preview">—</pre>
-</div>
-
-<h2>Environment</h2>
-<table>
-  <tr><th>User agent</th> <td id="eUA">—</td></tr>
-  <tr><th>Screen</th>     <td id="eScreen">—</td></tr>
-  <tr><th>Charset</th>    <td id="eCharset">—</td></tr>
-  <tr><th>Referrer</th>   <td id="eRef">—</td></tr>
-</table>
-
-<div class="row" style="margin-top:16px">
-  <button id="btnCopy">Copy report row</button>
-  <span class="note" id="copyNote"></span>
-</div>
-
-<h2>Load a known payload</h2>
-<div class="row">
-  <button class="ghost" id="btnGolden">Golden vector (70)</button>
-  <button class="ghost" id="btnReal1">Real log (1024)</button>
-  <button class="ghost" id="btnReal2">Real log + fault (1024)</button>
-</div>
-<p class="note">
-  Three payloads with known-correct decodes, for checking the page against
-  <code>tldecode.ps1</code> without a board. This page decodes only — it has no encoder, so real
-  payloads always come from the logger.
-</p>
-
-<h2>Generate a ruler URL (fragment length probe)</h2>
-<div class="row">
-  <label>Data bytes <input type="number" id="genN" value="1500" min="1" max="60000" step="100"></label>
-  <button id="btnGen">Generate</button>
-</div>
-<div class="row">
-  <label><input type="checkbox" id="genStd"> use standard base64 (<code>+ / =</code>) instead of base64url (<code>- _</code>)</label>
-</div>
-<pre id="genOut">—</pre>
-<div class="row" style="margin-top:10px">
-  <button id="btnGenCopy">Copy URL</button>
-  <span class="note" id="genNote"></span>
-</div>
-<p class="note">
-  The ruler is 6-character chunks <code>NNNNN.</code> where <code>NNNNN</code> is the running byte
-  count at that chunk's end. Base64 maps 4 characters onto 3 bytes, so a truncated fragment still
-  decodes cleanly up to its last whole group — and the tail of the decoded ruler then states its
-  own surviving length. That self-describing property is why the ruler is kept: a tempcomp
-  payload cannot do it.
-</p>
-
-<h2>Self-test</h2>
-<div class="banner" id="selftest">—</div>
-<p class="note">
-  The decoder is checked against an embedded 70-sample vector and its known output, in this
-  browser, on load. The vector exercises every code path: small deltas, a 32-sample zero-delta
-  run, two faults, both clamp limits, a jump wide enough to force the escape option, and a
-  negative ramp.
-</p>
 
 <script>
 "use strict";
@@ -274,15 +202,18 @@
 
 var $ = function (id) { return document.getElementById(id); };
 
-function set(id, text, cls) {
-  var e = $(id);
+function setText(id, text) { var e = $(id); if (e) { e.textContent = text; } }
+function setClass(id, cls) { var e = $(id); if (e) { e.className = cls; } }
+function show(id, on) {
+  var e = $(id), c;
   if (!e) { return; }
-  e.textContent = text;
-  e.className = cls || "";
+  c = (" " + e.className + " ").replace(/ hide /g, " ");
+  e.className = (on ? c : c + "hide").replace(/^\s+|\s+$/g, "");
 }
-function show(id, on) { $(id).className = on ? "" : "hide"; }
 
 function hex4(v) { return ("000" + v.toString(16).toUpperCase()).slice(-4); }
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
 
 /* tenths of a degree -> "26.9", or "n/a" for a fault */
 function t1(v) {
@@ -290,25 +221,52 @@ function t1(v) {
   var s = v < 0 ? "-" : "", a = Math.abs(v);
   return s + Math.floor(a / 10) + "." + (a % 10);
 }
+function degC(v) { return t1(v) + " °C"; }
 
-/* seconds -> human duration */
+/* seconds -> human duration, for the chart's default axis */
 function dur(s) {
   if (s < 120) { return s + " s"; }
   if (s < 7200) { return (s / 60).toFixed(s < 600 ? 1 : 0) + " min"; }
   return (s / 3600).toFixed(1) + " h";
 }
 
-function utf8Bytes(s) {
-  if (window.TextEncoder) { return new TextEncoder().encode(s).length; }
-  return unescape(encodeURIComponent(s)).length; // legacy fallback
+/* All times are shown in UTC, as the mockups do. Built by hand from getUTC*:
+   toISOString is ES5 and would fail under the test harness. */
+function fmtUTC(ms) {
+  var d = new Date(ms);
+  return pad2(d.getUTCDate()) + "." + pad2(d.getUTCMonth() + 1) + "." + d.getUTCFullYear() +
+         ", " + pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + " UTC";
+}
+function fmtShort(ms) {
+  var d = new Date(ms);
+  return pad2(d.getUTCDate()) + "." + pad2(d.getUTCMonth() + 1) + ". " +
+         pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes());
 }
 
-/* ===== S2  base64 — carried over unchanged from the fragment probe ===== */
-
-function b64encode(binStr, urlSafe) {
-  var b = btoa(binStr);
-  return urlSafe ? b.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : b;
+function fmtAge(ms) {
+  var s = Math.floor(ms / 1000);
+  if (s < 60) { return "just now"; }
+  if (s < 3600) { return plural(Math.floor(s / 60), "minute", "minutes") + " ago"; }
+  if (s < 172800) { return plural(Math.floor(s / 3600), "hour", "hours") + " ago"; }
+  return plural(Math.floor(s / 86400), "day", "days") + " ago";
 }
+
+function fmtInterval(s) {
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60, out = [];
+  if (h) { out.push(plural(h, "hour", "hours")); }
+  if (m) { out.push(plural(m, "minute", "minutes")); }
+  if (r || !out.length) { out.push(plural(r, "second", "seconds")); }
+  return out.join(" ");
+}
+
+/* "45KP21094K9001" -> "45KP 21094 K9001" */
+function fmtId(id) {
+  return id.length === 14 ? id.slice(0, 4) + " " + id.slice(4, 9) + " " + id.slice(9) : id;
+}
+
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+/* ===== S2  base64 ===================================================== */
 
 // Decodes standard or url-safe base64, tolerating missing padding and a truncated
 // trailing group. Returns { bytes, text, dropped, alphabet, error }.
@@ -341,14 +299,17 @@ function b64decode(s) {
 }
 
 /* ===== S3  CRC-16/CCITT-FALSE ========================================== */
-/* poly 0x1021, init 0xFFFF, no reflection, no final xor. Bitwise: a 512-byte
-   table would cost more than the whole decoder and save nothing measurable. */
+/* poly 0x1021, init 0xFFFF, no reflection, no final xor. Over a range,
+   optionally treating two bytes as zero - which is how a segment's CRC covers
+   the segment including the field holding it. Bitwise: a 512-byte table would
+   cost more than the whole decoder and save nothing measurable. */
 
-function crc16(bytes, len) {
-  var crc = 0xFFFF;
-  for (var i = 0; i < len; i++) {
-    crc ^= bytes[i] << 8;
-    for (var j = 0; j < 8; j++) {
+function crc16Range(bytes, off, len, zeroAt) {
+  var crc = 0xFFFF, i, j, b;
+  for (i = 0; i < len; i++) {
+    b = (zeroAt >= 0 && (i === zeroAt || i === zeroAt + 1)) ? 0 : bytes[off + i];
+    crc ^= b << 8;
+    for (j = 0; j < 8; j++) {
       crc = (crc & 0x8000) ? (((crc << 1) ^ 0x1021) & 0xFFFF) : ((crc << 1) & 0xFFFF);
     }
   }
@@ -358,12 +319,12 @@ function crc16(bytes, len) {
 /* ===== S4  bit reader, MSB-first ======================================= */
 
 /* The encoder never picks an option costlier than the escape, so a quotient
-   cannot exceed block_size * 13 bits. Anything longer is corruption — and
+   cannot exceed block_size * 13 bits. Anything longer is corruption - and
    without this cap a bad payload would spin forever and hang the phone. */
 var UNARY_CAP = 1024;
 
 /* `end` bounds the reader, so a segment with a corrupt sample count cannot
-   read its way into the next one. v1 leaves it out and gets the whole blob. */
+   read its way into the next one. */
 function BitReader(bytes, off, end) {
   this.b = bytes; this.pos = off; this.bit = 0;
   this.end = (end === undefined) ? bytes.length : end;
@@ -391,40 +352,25 @@ BitReader.prototype.unary = function () {
 
 BitReader.prototype.align = function () { if (this.bit) { this.bit = 0; this.pos++; } };
 
-/* ===== S5  container parser ============================================ */
-/* Pure function: bytes in, plain object out, no DOM. The self-test exercises
-   this exact path, which is only meaningful because it touches nothing else. */
+/* ===== S5  the ring: formats v2 and v3 ================================= */
+/* A cyclic log: a global header, then fixed-size segments that each decode on
+   their own. Segments are written round-robin and the oldest is overwritten,
+   so the order on the tag is not the order in time - each segment says which
+   sample it starts at, and this puts them back in order.
+   v2: NFCLOG-64K-PLAN.md section 13. v3 adds the start time to the global
+   header (21 bytes instead of 18) and changes nothing else:
+   LIBERO-LITE-PLAN.md section 10. */
 
-var MAGIC_B64   = "VEwB";   // 'T','L',0x01 — the whole detection rule
 var FAULT       = -2048;
-var OPT_KMAX    = 12;
 var OPT_ZERO    = 13;
 var OPT_ESC     = 14;
 var ESC_BITS    = 13;
-var HEADER_LEN  = 16;
-var TRAILER_LEN = 2;
 
 function signext(v, bits) { return (v & (1 << (bits - 1))) ? v - (1 << bits) : v; }
 function unzig(u) { return (u >>> 1) ^ -(u & 1); }
 
-/* CRC over a range, optionally treating two bytes as zero — which is how a v2
-   segment's CRC covers the segment including the field holding it. */
-function crc16Range(bytes, off, len, zeroAt) {
-  var crc = 0xFFFF, i, j, b;
-  for (i = 0; i < len; i++) {
-    b = (zeroAt >= 0 && (i === zeroAt || i === zeroAt + 1)) ? 0 : bytes[off + i];
-    crc ^= b << 8;
-    for (j = 0; j < 8; j++) {
-      crc = (crc & 0x8000) ? (((crc << 1) ^ 0x1021) & 0xFFFF) : ((crc << 1) & 0xFFFF);
-    }
-  }
-  return crc;
-}
-
 /* The Rice payload of COMPRESSION-PLAN section 6.2, appended to `vals`.
-   Shared by the v1 container and every v2 segment, so both read the same bits
-   the same way — and so a truncated v1 payload still keeps what it decoded,
-   which is why the caller owns the array. Throws on a malformed stream. */
+   Throws on a malformed stream. */
 function decodeRice(br, count, block, stats, vals) {
   var prev, m, opt, j, q, rem;
 
@@ -452,125 +398,34 @@ function decodeRice(br, count, block, stats, vals) {
   return vals;
 }
 
-function parseContainer(bytes, allowBadCrc) {
-  var r = {
-    ok: false, error: null, crcOk: false, degraded: false, truncated: false,
-    version: 0, scheme: 0, count: 0, intervalS: 0, firstIndex: 0, block: 0,
-    values: [], faults: [], blockStats: {},
-    size: { header: HEADER_LEN, payload: 0, faults: 0, crc: TRAILER_LEN, total: bytes.length }
-  };
-
-  if (bytes.length < HEADER_LEN + TRAILER_LEN) {
-    r.error = "blob is " + bytes.length + " bytes, shorter than an empty container";
-    return r;
-  }
-
-  // CRC before anything else is trusted.
-  var want = bytes[bytes.length - 2] | (bytes[bytes.length - 1] << 8);
-  var got  = crc16(bytes, bytes.length - 2);
-  r.crcOk = (got === want);
-  r.crcWant = want;
-  r.crcGot = got;
-  if (!r.crcOk && !allowBadCrc) {
-    r.error = "CRC mismatch: computed 0x" + hex4(got) + ", blob carries 0x" + hex4(want);
-    return r;
-  }
-  r.degraded = !r.crcOk;
-
-  if (bytes[0] !== 0x54 || bytes[1] !== 0x4C) { r.error = "bad magic"; return r; }
-
-  r.version = bytes[2];
-  if (r.version !== 1) {
-    r.error = "format version " + r.version + " — this page only knows version 1";
-    return r;
-  }
-  r.scheme = bytes[3];
-  if (r.scheme !== 0 && r.scheme !== 1) { r.error = "unknown scheme " + r.scheme; return r; }
-
-  r.count      = bytes[4] | (bytes[5] << 8);
-  r.intervalS  = bytes[6] | (bytes[7] << 8);
-  r.firstIndex = (bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24)) >>> 0;
-
-  var bps = bytes[12];
-  if (bps !== 12) { r.error = "bits_per_sample " + bps + " — this page only handles 12"; return r; }
-  r.block = 1 << bytes[13];
-  if (bytes[14] !== 0) { r.error = "unknown scale_code " + bytes[14]; return r; }
-
-  var br = new BitReader(bytes, HEADER_LEN);
-  var vals = [], stats = {}, i;
-
-  try {
-    if (r.scheme === 0) {
-      for (i = 0; i < r.count; i++) { vals.push(signext(br.read(12), 12)); }
-    } else {
-      decodeRice(br, r.count, r.block, stats, vals);
-    }
-  } catch (e) {
-    // A verified blob must decode. An unverified one may simply have been cut,
-    // and everything decoded before the cut is still correct.
-    if (!r.degraded) { r.error = e.message; return r; }
-    r.truncated = true;
-  }
-
-  r.values = vals;
-  br.align();
-  r.size.payload = br.pos - HEADER_LEN;
-
-  // The fault list lives after the payload, so a truncated blob has lost it.
-  // Only read it when the CRC vouched for the whole thing.
-  if (!r.degraded) {
-    var pos = br.pos;
-    if (pos + 2 > bytes.length - TRAILER_LEN) { r.error = "blob ends before the fault section"; return r; }
-    var nf = bytes[pos] | (bytes[pos + 1] << 8);
-    pos += 2;
-    if (pos + 2 * nf !== bytes.length - TRAILER_LEN) {
-      r.error = "fault section claims " + nf + " entries but "
-              + (bytes.length - TRAILER_LEN - pos) + " bytes remain";
-      return r;
-    }
-    for (i = 0; i < nf; i++) {
-      var idx = bytes[pos] | (bytes[pos + 1] << 8);
-      pos += 2;
-      if (idx >= r.count) { r.error = "fault index " + idx + " is past the end"; return r; }
-      r.faults.push(idx);
-      vals[idx] = FAULT;
-    }
-    r.size.faults = 2 + 2 * nf;
-  }
-
-  r.blockStats = stats;
-  r.ok = true;
-  return r;
-}
-
-/* ===== S5b  ring parser, format v2 ===================================== */
-/* A cyclic log: a global header, then fixed-size segments that each decode on
-   their own. Segments are written round-robin and the oldest is overwritten,
-   so the order on the tag is not the order in time — each segment says which
-   sample it starts at, and this puts them back in order.
-   Format in NFCLOG-64K-PLAN.md section 13. */
-
 var MAGIC_B64_V2 = "VEwC";   // 'T','L',0x02
+var MAGIC_B64_V3 = "VEwD";   // 'T','L',0x03
 var V2_GLOBAL    = 18;
-var V2_SEG_HDR   = 9;
+var V3_GLOBAL    = 21;
+var V2_SEG_HDR   = 9;        // segments are the same in v2 and v3
 
 function parseRing(bytes) {
   var r = {
-    ok: false, error: null, version: 2, scheme: 0, intervalS: 0,
+    ok: false, error: null, version: 0, scheme: 0, intervalS: 0, startUtc: null,
     segBytes: 0, segTotal: 0, openSeg: 0, wrapped: false, present: 0,
     values: [], indices: [], faults: [], blockStats: {}, segs: [],
-    segOk: 0, segDamaged: 0, segEmpty: 0, gaps: 0, missing: 0,
+    segOk: 0, segDamaged: 0, segEmpty: 0, gaps: 0, missing: 0, gapList: [],
     overwritten: 0, newest: 0, tail: 0,
-    size: { global: V2_GLOBAL, payload: 0, total: bytes.length }
+    size: { global: 0, payload: 0, total: bytes.length }
   };
-  var i, j, s;
+  var i, j, s, g;
 
-  if (bytes.length < V2_GLOBAL) { r.error = "shorter than a v2 global header"; return r; }
+  if (bytes.length < 3) { r.error = "shorter than a global header"; return r; }
   if (bytes[0] !== 0x54 || bytes[1] !== 0x4C) { r.error = "bad magic"; return r; }
-  if (bytes[2] !== 2) { r.error = "format version " + bytes[2] + " — this page knows 1 and 2"; return r; }
+  r.version = bytes[2];
+  if (r.version === 2) { g = V2_GLOBAL; }
+  else if (r.version === 3) { g = V3_GLOBAL; }
+  else { r.error = "format version " + r.version + " — this page knows 2 and 3"; return r; }
+  r.size.global = g;
+  if (bytes.length < g) { r.error = "shorter than a v" + r.version + " global header"; return r; }
 
-  var gWant = bytes[16] | (bytes[17] << 8);
-  var gGot  = crc16Range(bytes, 0, 16, -1);
+  var gWant = bytes[g - 2] | (bytes[g - 1] << 8);
+  var gGot  = crc16Range(bytes, 0, g - 2, -1);
   if (gGot !== gWant) {
     r.error = "global header CRC mismatch: computed 0x" + hex4(gGot) + ", carries 0x" + hex4(gWant);
     return r;
@@ -582,11 +437,15 @@ function parseRing(bytes) {
   r.segTotal  = bytes[8];
   r.openSeg   = bytes[9];
   r.wrapped   = (bytes[10] & 1) !== 0;
+  if (r.version === 3) {
+    var su = (bytes[14] | (bytes[15] << 8) | (bytes[16] << 16) | (bytes[17] << 24)) >>> 0;
+    r.startUtc = su === 0 ? null : su;
+  }
 
   var bps   = bytes[11];
   var block = 1 << bytes[12];
 
-  if (r.scheme !== 1) { r.error = "v2 scheme " + r.scheme + " — only Rice is defined"; return r; }
+  if (r.scheme !== 1) { r.error = "scheme " + r.scheme + " — only Rice is defined"; return r; }
   if (bps !== 12) { r.error = "bits_per_sample " + bps + " — this page only handles 12"; return r; }
   if (bytes[13] !== 0) { r.error = "unknown scale_code " + bytes[13]; return r; }
   if (r.segTotal < 1) { r.error = "segment_total is 0"; return r; }
@@ -595,14 +454,14 @@ function parseRing(bytes) {
     return r;
   }
 
-  var avail = bytes.length - V2_GLOBAL;
+  var avail = bytes.length - g;
   r.present = Math.floor(avail / r.segBytes);
   r.tail    = avail - r.present * r.segBytes;
   if (r.present < 1) { r.error = "no whole segment present"; return r; }
 
   var list = [];
   for (s = 0; s < r.present; s++) {
-    var off = V2_GLOBAL + s * r.segBytes;
+    var off = g + s * r.segBytes;
     var seg = { slot: s, ok: false, empty: false, bad: false, first: 0, count: 0, faults: 0 };
     var cWant = bytes[off + 7] | (bytes[off + 8] << 8);
     var cGot  = crc16Range(bytes, off, r.segBytes, 7);
@@ -651,7 +510,7 @@ function parseRing(bytes) {
 
   if (!list.length) {
     /* All empty and none damaged is not a fault: the logger has just started
-     * a fresh log (every reset does) and no sample has reached the tag yet. */
+     * a fresh log and no sample has reached the tag yet. */
     r.error = r.segDamaged === 0
       ? "the log is empty - the logger has just started and no sample has reached the tag yet"
       : "no readable segment: " + r.segDamaged + " damaged, " + r.segEmpty + " empty";
@@ -665,7 +524,10 @@ function parseRing(bytes) {
     var sg = list[i];
     if (expect !== null && sg.first !== expect) {
       r.gaps++;
-      if (sg.first > expect) { r.missing += sg.first - expect; }
+      if (sg.first > expect) {
+        r.missing += sg.first - expect;
+        r.gapList.push({ from: expect, to: sg.first - 1 });
+      }
     }
     for (j = 0; j < sg.count; j++) {
       r.indices.push(sg.first + j);
@@ -676,18 +538,14 @@ function parseRing(bytes) {
   }
 
   /* Overflow is not guesswork: the oldest surviving segment starts at the
-     sample index it starts at, so anything before that has been overwritten. */
+     sample index it starts at, so anything before that is no longer here. */
   r.overwritten = list[0].first;
   r.newest      = r.indices[r.indices.length - 1];
   r.ok = true;
   return r;
 }
 
-/* ===== S6  golden vector and self-test ================================= */
-
-var GOLDEN_B64 =
-  "VEwBAUYACgAAAAAADAUAAA3BV6JeAAAACqqqqqqqpgCAIAgCAIAgCAIAgCAg" +
-  "D8wAB_QD-4AyuBoGgaBoGgaBoGgaBoGgaBoGgaBiZmZgAgAqAC8AiCM";
+/* ===== S6  reference vectors and self-test ============================= */
 
 var GOLDEN = [
   220, 221, 221, 220, 219, 220, 222, 223, 222, 221,
@@ -699,23 +557,9 @@ var GOLDEN = [
   -114, -111, -108, -105, -102, -99, -96, -93, -90, -87
 ];
 
-/* Real dumps, verified byte-for-byte against the host model. Three independent
-   series beats one: the golden vector reaches every code path, but a bug it
-   does not happen to touch would otherwise go unseen. */
-var REAL_1 = "VEwBAQAEAQAUAAAADAUAABDQnTT_9L5uGf__T6fh_Z6U75vw__6f3mmH__p_" +
-             "_KBv6fylKb-E3lOn_9nQP____8P9nT__T6H____lMKX53n_vwPSz0_vn2GU" +
-             "s9-WUp-kPs-5-n7KBT__-lP8P_6U__8C____L8Nz____h_9zT__hp6f___h" +
-             "__m__zB5c3___h6fT___h-Upf-n7wy_-n-n-H____poS8v_7-UsP_0___Ia" +
-             "Up_-aX-QebP_Sz_w__p__LgAACawA";
-
-var REAL_2 = "VEwBAQAEAQB0DgAADAUAABDt0P__yy_8P___p_7of___6fD_0___-h6af_T_" +
-             "_Q_p___-H____0wSn____90P_T___6H____yw-WUv-aXLw5eX-WXm-Gb__L" +
-             "_5QlPS_-adPQKXNnTS5Z_QL_-U3PSmkNKWdLKblzcgmmmy5Sy80pQ_l-X_L" +
-             "nQ_l_8pZpsgm8ss6bP08Pp_T6em8h6U9ynZ_SgAQD1A3cD";
-
-/* The same 70 samples, through the v2 ring at the real geometry (357 B × 17).
-   Produced by the firmware's own bring-up tool, which checks it too, so this
-   string is the one place where the encoder and this page have to agree. */
+/* The 70 samples through the ring at the real geometry (357 B x 17), as the
+   firmware's diagnostic image produces them. These strings are where the
+   encoder and this page have to agree. */
 var GOLDEN_V2 =
   "VEwCAQoAZQERAAAMBQAAAKpSAAAAAEYAAiwYDcFXol4AAAAKqqqqqqqmAIAg" +
   "CAIAgCAIAgCAICAPzAAH9AP7gDK4GgaBoGgaBoGgaBoGgaBoGgaBoGJmZmAA" +
@@ -727,106 +571,274 @@ var GOLDEN_V2 =
   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
   "AAAAAAAAAAAAAAAvACoA";
 
+/* The same segment behind a v3 header whose start time is 1790000000
+   (2026-09-21 14:13:20 UTC). */
+var GOLDEN_V3_START = 1790000000;
+var GOLDEN_V3 =
+  "VEwDAQoAZQERAAAMBQCAO7FqAPHvAAAAAEYAAiwYDcFXol4AAAAKqqqqqqqmAIAg" +
+  "CAIAgCAIAgCAICAPzAAH9AP7gDK4GgaBoGgaBoGgaBoGgaBoGgaBoGJmZmAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAvACoA";
+
+/* Decodes one vector and checks it against GOLDEN. Returns an error or null. */
+function checkVector(b64, label) {
+  var d = b64decode(b64), q, i;
+  if (d.error) { return label + " base64: " + d.error; }
+  q = parseRing(d.bytes);
+  if (!q.ok) { return label + ": " + q.error; }
+  if (q.values.length !== GOLDEN.length) {
+    return label + " decoded " + q.values.length + " samples, expected " + GOLDEN.length;
+  }
+  for (i = 0; i < GOLDEN.length; i++) {
+    if (q.values[i] !== GOLDEN[i]) {
+      return label + " sample " + i + ": got " + q.values[i] + ", expected " + GOLDEN[i];
+    }
+  }
+  if (q.segOk !== 1 || q.wrapped || q.overwritten !== 0 || q.newest !== 69) {
+    return label + " ring state wrong";
+  }
+  return null;
+}
+
 function selfTest() {
-  var d, p, q, i;
+  var err;
   try {
-    d = b64decode(GOLDEN_B64);
-    if (d.error) { return { ok: false, msg: "FAIL — base64: " + d.error }; }
-    p = parseContainer(d.bytes, false);
-    if (!p.ok) { return { ok: false, msg: "FAIL — " + p.error }; }
-    if (p.values.length !== GOLDEN.length) {
-      return { ok: false, msg: "FAIL — decoded " + p.values.length + " samples, expected " + GOLDEN.length };
+    err = checkVector(GOLDEN_V2, "v2");
+    if (!err) { err = checkVector(GOLDEN_V3, "v3"); }
+    if (!err) {
+      var q = parseRing(b64decode(GOLDEN_V3).bytes);
+      if (q.version !== 3 || q.startUtc !== GOLDEN_V3_START) { err = "v3 start time wrong"; }
     }
-    for (i = 0; i < GOLDEN.length; i++) {
-      if (p.values[i] !== GOLDEN[i]) {
-        return { ok: false, msg: "FAIL — sample " + i + ": got " + p.values[i] + ", expected " + GOLDEN[i] };
-      }
-    }
-
-    /* The same series again, this time as a one-segment v2 ring. Both formats
-       must produce identical samples, or one of the two decoders is wrong. */
-    d = b64decode(GOLDEN_V2);
-    if (d.error) { return { ok: false, msg: "FAIL — v2 base64: " + d.error }; }
-    q = parseRing(d.bytes);
-    if (!q.ok) { return { ok: false, msg: "FAIL — v2: " + q.error }; }
-    if (q.values.length !== GOLDEN.length) {
-      return { ok: false, msg: "FAIL — v2 decoded " + q.values.length + " samples, expected " + GOLDEN.length };
-    }
-    for (i = 0; i < GOLDEN.length; i++) {
-      if (q.values[i] !== GOLDEN[i]) {
-        return { ok: false, msg: "FAIL — v2 sample " + i + ": got " + q.values[i] + ", expected " + GOLDEN[i] };
-      }
-    }
-    if (q.segOk !== 1 || q.wrapped || q.overwritten !== 0 || q.newest !== 69) {
-      return { ok: false, msg: "FAIL — v2 ring state wrong" };
-    }
-
-    return { ok: true, msg: "PASS — the 70-sample reference vector decodes exactly in this browser, in both v1 and v2" };
+    if (err) { return { ok: false, msg: "FAIL — " + err }; }
+    return { ok: true, msg: "PASS — the 70-sample reference series decodes exactly in this browser, as v2 and as v3" };
   } catch (e) {
     return { ok: false, msg: "FAIL — threw: " + e.message };
   }
 }
 
-/* ===== S7  ruler path — carried over unchanged ========================= */
+/* ===== S7  the URL ===================================================== */
+/* ?id=<Device ID> is the logger's identity, which the server looks shipments
+   up by; &demo=1 switches to demo mode (section S8). The log itself is the
+   fragment after #, which never leaves the phone. */
 
-function pad5(n) { var s = String(n); while (s.length < 5) { s = "0" + s; } return s; }
+var UNPROVISIONED_ID = "00000000000000";
 
-// 6-char self-describing chunks: "00006.00012.00018." ... truncated to exactly n chars.
-function makeRuler(n) {
-  var out = [], i = 6, len = 0;
-  while (len < n) { out.push(pad5(i) + "."); len += 6; i += 6; }
-  return out.join("").slice(0, n);
+function decodePart(s) {
+  s = s.replace(/\+/g, " ");
+  try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-// Value of the last chunk whose marker still agrees with its own offset.
-function lastIntactMarker(s) {
-  var re = /(\d{5})\./g, m, best = null;
-  while ((m = re.exec(s)) !== null) {
-    if (parseInt(m[1], 10) === m.index + 6) { best = m.index + 6; }
+function parseLocation(search, hash) {
+  var out = { id: "", idRaw: null, idValid: false, demo: false, frag: "" };
+  var q = (search || "").replace(/^\?/, ""), parts, kv, i;
+
+  parts = q.length ? q.split("&") : [];
+  for (i = 0; i < parts.length; i++) {
+    kv = parts[i].split("=");
+    var key = decodePart(kv[0]);
+    var val = decodePart(kv.slice(1).join("="));
+    if (key === "id") { out.idRaw = val; }
+    if (key === "demo") { out.demo = (val === "1"); }
   }
-  return best;
-}
-
-// FNV-1a 32-bit, used only when crypto.subtle is unavailable (non-secure context).
-function fnv1a(bytes) {
-  var h = 0x811c9dc5;
-  for (var i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  if (out.idRaw !== null) {
+    out.id = out.idRaw.toUpperCase().replace(/[\s-]/g, "");
+    out.idValid = /^[0-9A-Z]{14}$/.test(out.id);
   }
-  return ("0000000" + h.toString(16)).slice(-8);
+  out.frag = (hash || "").replace(/^#/, "");
+  return out;
 }
 
-function hash(bytes, cb) {
-  if (!bytes || !bytes.length) { cb("—"); return; }
-  if (window.crypto && crypto.subtle) {
-    crypto.subtle.digest("SHA-256", bytes).then(function (buf) {
-      var hex = "", v = new Uint8Array(buf);
-      for (var i = 0; i < 8; i++) { hex += ("0" + v[i].toString(16)).slice(-2); }
-      cb(hex);
-    })["catch"](function () { cb("fnv1a:" + fnv1a(bytes)); });
-  } else {
-    cb("fnv1a:" + fnv1a(bytes));
+/* ===== S8  the derived model =========================================== */
+/* Everything the tabs show, from the decoded ring, the time, the (mock)
+   server's shipment and the stored confirmation. Pure: no DOM, so the harness
+   checks exactly what the phone shows. Rules: LIBERO-LITE-PLAN section 13.5. */
+
+var DEMO_AGE_MS     = 7 * 60 * 1000;   // demo=1: the newest reading is always this old
+var PUBLISH_MAX_S   = 30;              // the firmware publishes at most this often
+var DRIFT_ALLOWANCE = 0.02;            // the logger's clock is not trimmed yet (plan R3)
+var FUTURE_SLACK_MS = 120000;
+
+/* Where each sample index lies in time, in ms:
+     exact      start time from a v3 header, plus one interval per sample;
+     estimated  no start time (v2): the newest sample is taken as "now";
+     demo       the newest sample is DEMO_AGE_MS before `nowMs`. */
+function timeBase(ring, nowMs, demo) {
+  var iv = ring.intervalS * 1000, newest = ring.newest, s, a;
+  if (demo) {
+    a = nowMs - DEMO_AGE_MS;
+    return { mode: "demo", at: function (i) { return a - (newest - i) * iv; } };
   }
+  if (ring.startUtc !== null) {
+    s = ring.startUtc * 1000;
+    return { mode: "exact", at: function (i) { return s + i * iv; } };
+  }
+  return { mode: "estimated", at: function (i) { return nowMs - (newest - i) * iv; } };
 }
 
-function preview(s) {
-  if (s.length <= 96) { return s; }
-  return s.slice(0, 48) + "\n  … " + (s.length - 96) + " bytes omitted …\n" + s.slice(-48);
+function fmtWhen(ms, mode) { return (mode === "estimated" ? "≈ " : "") + fmtUTC(ms); }
+
+/* A stored confirmation belongs to one logger and one run. Demo mode stores
+   nothing (null), so every tap of the demo starts at the same screen. */
+function confirmationKey(id, startUtc, demo) {
+  if (demo) { return null; }
+  return "libero:" + (id || "none") + ":" + (startUtc === null ? "unknown" : String(startUtc));
 }
 
-/* ===== S10  chart ====================================================== */
+function lastMeasurementText(m) {
+  var iv = m.intervalS * 1000;
+  if (m.mode === "demo") { return fmtAge(m.ageMs); }
+  if (m.mode === "estimated") { return "within the last " + fmtInterval(m.intervalS) + " (estimated)"; }
+  if (m.future) { return "unknown — the logger's time is ahead of this phone"; }
+  if (m.ageMs < 60000) { return "just now"; }
+  if (m.stale) { return fmtAge(m.ageMs); }
+  /* A live logger publishes every sample within interval + 30 s, so a larger
+     age is clock drift, not a late sample. */
+  if (m.ageMs > iv + PUBLISH_MAX_S * 1000) { return "within the last " + fmtInterval(m.intervalS); }
+  return fmtAge(m.ageMs);
+}
+
+/* Faults (merged into runs) and gaps between segments, oldest first. */
+function missingReadings(ring) {
+  var out = [], f = ring.faults, i, a = -1, b = -1;
+  for (i = 0; i < f.length; i++) {
+    if (a < 0) { a = f[i]; b = f[i]; }
+    else if (f[i] === b + 1) { b = f[i]; }
+    else { out.push({ kind: "fault", from: a, to: b }); a = f[i]; b = f[i]; }
+  }
+  if (a >= 0) { out.push({ kind: "fault", from: a, to: b }); }
+  for (i = 0; i < ring.gapList.length; i++) {
+    out.push({ kind: "gap", from: ring.gapList[i].from, to: ring.gapList[i].to });
+  }
+  out.sort(function (x, y) { return x.from - y.from; });
+  return out;
+}
+
+function missingText(entries, at) {
+  var total = 0, parts = [], i, e, n, when;
+  for (i = 0; i < entries.length; i++) { total += entries[i].to - entries[i].from + 1; }
+  if (!total) { return "0"; }
+  for (i = 0; i < entries.length && i < 5; i++) {
+    e = entries[i];
+    n = e.to - e.from + 1;
+    when = n === 1 ? fmtShort(at(e.from)) : fmtShort(at(e.from)) + " – " + fmtShort(at(e.to));
+    parts.push(e.kind === "fault"
+      ? plural(n, "sensor fault", "sensor faults") + " (" + when + ")"
+      : n + " missing between segments (" + when + ")");
+  }
+  return total + " — " + parts.join(", ") + (entries.length > 5 ? ", …" : "");
+}
+
+function judgeAlarm(ring, at, m, shipment) {
+  var lim = shipment && shipment.alarm ? shipment.alarm : null;
+  var above = 0, below = 0, first = null, any = false, i, v, t, parts;
+  if (!lim) { return { state: "none", text: "No alarm limits configured" }; }
+  if (m.windowEmpty) { return { state: "none", text: "Cannot judge: this phone's clock is before the logger's start" }; }
+  for (i = 0; i < ring.values.length; i++) {
+    v = ring.values[i];
+    if (v === FAULT) { continue; }
+    t = at(ring.indices[i]);
+    if (t < m.start || t > m.end) { continue; }
+    any = true;
+    if (v > lim.high || v < lim.low) {
+      if (v > lim.high) { above++; } else { below++; }
+      if (first === null) { first = t; }
+    }
+  }
+  if (!any) { return { state: "none", text: "No readings to judge" }; }
+  if (!above && !below) { return { state: "ok", text: "No excursion" }; }
+  parts = [];
+  if (above) { parts.push(plural(above, "reading", "readings") + " above " + degC(lim.high)); }
+  if (below) { parts.push((above ? below : plural(below, "reading", "readings")) + " below " + degC(lim.low)); }
+  return { state: "bad", text: parts.join(" and ") + ", first " + fmtWhen(first, m.mode) };
+}
+
+function judgeHealth(m, tNewest) {
+  if (m.stale) { return { state: "bad", text: "No measurement since " + fmtUTC(tNewest) }; }
+  if (m.newestIsFault) { return { state: "bad", text: "Sensor fault at the last measurement" }; }
+  if (m.mode === "estimated") { return { state: "warn", text: "Log has no start time (old format)" }; }
+  if (m.future) { return { state: "warn", text: "Logger time ahead of this phone" }; }
+  return { state: "ok", text: "" };
+}
+
+function summarize(ring, nowMs, shipment, confirmation, demo) {
+  var tb = timeBase(ring, nowMs, demo), at = tb.at;
+  var n = ring.values.length, i, v, t, tNewest, elapsed, entries;
+  var m = {
+    mode: tb.mode, at: at, intervalS: ring.intervalS, count: n, newest: ring.newest,
+    current: null, newestIsFault: n > 0 && ring.values[n - 1] === FAULT,
+    ageMs: 0, stale: false, future: false, lastText: "",
+    start: 0, end: 0, windowEmpty: false, max: null, min: null,
+    alarm: null, health: null, missing: null, missingText: "",
+    crcOk: ring.segDamaged === 0, crcText: "", bitsText: "", startText: "", samplesText: ""
+  };
+
+  for (i = n - 1; i >= 0; i--) {
+    if (ring.values[i] !== FAULT) {
+      m.current = { value: ring.values[i], index: ring.indices[i], time: at(ring.indices[i]) };
+      break;
+    }
+  }
+
+  tNewest = at(ring.newest);
+  m.ageMs = nowMs - tNewest;
+  m.start = tb.mode === "exact" ? ring.startUtc * 1000 : at(ring.indices[0]);
+  elapsed = Math.max(0, nowMs - m.start);
+  if (tb.mode === "exact") {
+    m.stale  = m.ageMs > 2 * ring.intervalS * 1000 + PUBLISH_MAX_S * 1000 + DRIFT_ALLOWANCE * elapsed;
+    m.future = m.ageMs < -(FUTURE_SLACK_MS + DRIFT_ALLOWANCE * elapsed);
+  }
+  m.lastText = lastMeasurementText(m);
+
+  /* The shipment's window: from the start to the reception confirmation, or
+     to now while it is still under way. */
+  m.end = confirmation ? confirmation.at : nowMs;
+  m.windowEmpty = m.end < m.start;
+  for (i = 0; i < n; i++) {
+    v = ring.values[i];
+    if (v === FAULT) { continue; }
+    t = at(ring.indices[i]);
+    if (t < m.start || t > m.end) { continue; }
+    if (!m.max || v > m.max.value) { m.max = { value: v, time: t, index: ring.indices[i] }; }
+    if (!m.min || v < m.min.value) { m.min = { value: v, time: t, index: ring.indices[i] }; }
+  }
+
+  m.alarm  = judgeAlarm(ring, at, m, shipment);
+  m.health = judgeHealth(m, tNewest);
+
+  entries = missingReadings(ring);
+  m.missing = entries;
+  m.missingText = missingText(entries, at);
+
+  m.crcText = m.crcOk
+    ? "OK — header and " + (ring.segOk + ring.segEmpty) + " of " + ring.present + " segments verified"
+    : "FAIL — " + ring.segDamaged + " of " + ring.present + " segments damaged, skipped";
+  m.bitsText = n ? (ring.size.payload * 8 / n).toFixed(2) : "—";
+  m.startText = tb.mode === "estimated" ? "not recorded (old format)" : fmtUTC(m.start);
+  m.samplesText = n + " kept" + (ring.overwritten > 0
+    ? ", " + ring.overwritten + " earlier no longer on the tag (" +
+      fmtShort(at(0)) + " – " + fmtShort(at(ring.overwritten - 1)) + ")"
+    : "");
+  return m;
+}
+
+/* ===== S9  chart ======================================================= */
 /* Built as one string and assigned once, so the whole chart is a pure
-   function of the parsed data. Colours come from the CSS custom properties,
-   which is why both themes work with no code here. */
+   function of its input. Stepped, because the data is quantised to 0.1 C;
+   faults break the trace; downsampled min/max per column above 2000 points,
+   so a one-sample spike cannot vanish. `opts` is optional:
+     label(k)  text for the x tick at dense index k (default: elapsed time)
+     marker    a dense index where a dashed line is drawn, e.g. a confirmation */
 
 var CH_W = 600, CH_H = 220, CH_L = 46, CH_R = 8, CH_T = 10, CH_B = 24;
 var DOWNSAMPLE_ABOVE = 2000;
-var MIN_SPAN_TENTHS = 10;      // 1.0 degC — below this a flat log reads as noise
+var MIN_SPAN_TENTHS = 10;      // 1.0 degC - below this a flat log reads as noise
 
-function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
-
-function chartSVG(values, intervalS, firstIndex) {
+function chartSVG(values, intervalS, firstIndex, opts) {
   var pw = CH_W - CH_L - CH_R, ph = CH_H - CH_T - CH_B;
   var n = values.length, i;
 
@@ -853,7 +865,6 @@ function chartSVG(values, intervalS, firstIndex) {
   svg.push('<svg class="chart" viewBox="0 0 ' + CH_W + ' ' + CH_H + '" role="img" ' +
            'aria-label="temperature over time">');
 
-  // gridlines and y labels
   for (i = 0; i < 3; i++) {
     var v = lo + (hi - lo) * i / 2, y = Y(v);
     svg.push('<line class="grid" x1="' + CH_L + '" y1="' + y.toFixed(1) +
@@ -863,19 +874,17 @@ function chartSVG(values, intervalS, firstIndex) {
   }
   svg.push('<rect class="frame" x="' + CH_L + '" y="' + CH_T + '" width="' + pw + '" height="' + ph + '"/>');
 
-  // x labels
   for (i = 0; i < 3; i++) {
     var k = Math.round((n - 1) * i / 2);
-    var secs = (firstIndex + k) * intervalS;
+    var label = (opts && opts.label) ? opts.label(k) : dur((firstIndex + k) * intervalS);
     var anchor = i === 0 ? "start" : (i === 2 ? "end" : "middle");
     svg.push('<text x="' + X(k).toFixed(1) + '" y="' + (CH_H - 8) +
-             '" text-anchor="' + anchor + '">' + esc(dur(secs)) + '</text>');
+             '" text-anchor="' + anchor + '">' + esc(label) + '</text>');
   }
 
   // the trace: step-after, broken at every fault, never bridged
   var d = [], open = false, gaps = [];
   if (n > DOWNSAMPLE_ABOVE) {
-    // min/max per pixel column, so a one-sample spike cannot be decimated away
     var cols = Math.min(pw, n);
     for (var c = 0; c < cols; c++) {
       var a = Math.floor(n * c / cols), b = Math.max(a + 1, Math.floor(n * (c + 1) / cols));
@@ -899,7 +908,7 @@ function chartSVG(values, intervalS, firstIndex) {
       var x2 = X(i), y2 = Y(values[i]);
       if (!open) { d.push("M" + x2.toFixed(1) + "," + y2.toFixed(1)); open = true; }
       else { d.push("L" + x2.toFixed(1) + "," + py.toFixed(1));       // hold, then
-             d.push("L" + x2.toFixed(1) + "," + y2.toFixed(1)); }     // jump — step-after
+             d.push("L" + x2.toFixed(1) + "," + y2.toFixed(1)); }     // jump - step-after
       py = y2;
     }
   }
@@ -911,440 +920,383 @@ function chartSVG(values, intervalS, firstIndex) {
              '" x2="' + gaps[i].toFixed(1) + '" y2="' + (CH_T + ph) + '"/>');
   }
 
+  if (opts && typeof opts.marker === "number" && opts.marker >= 0 && opts.marker <= n - 1) {
+    var mxp = X(opts.marker).toFixed(1);
+    svg.push('<line class="mark" x1="' + mxp + '" y1="' + CH_T + '" x2="' + mxp +
+             '" y2="' + (CH_T + ph) + '"/>');
+  }
+
   if (d.length) { svg.push('<path class="line" d="' + d.join(" ") + '"/>'); }
   svg.push("</svg>");
   return svg.join("");
 }
 
-/* ===== S9  render ====================================================== */
+/* ===== S10  mock server ================================================ */
+/* Stands in for the shipment server. These three functions are the only
+   places a real one plugs in. The data is public once pushed: demo values. */
 
-var report = {};
+var SHIPMENTS = {
+  "45KP21094K9001": {
+    shipmentId: "fj20flql309u08", site: "Kentucky", country: "US", product: "87490210",
+    alarm: { low: 0, high: 300 }          // server-side alarm limits, tenths of a degree
+  }
+};
+var MOCK_LOOKUP_MS = 300, MOCK_SAVE_MS = 600;
+var memStore = {};              // when localStorage is unavailable (private browsing)
+var demoConfirmation = null;    // demo mode: this page load only
 
-/* Every render clears everything first. hashchange re-renders in place, and a
-   failed parse must never leave numbers from the previous successful one on
-   screen. Resetting unconditionally here is cheaper than getting it right in
-   each branch. */
-function resetOutputs() {
-  var ids = ["bigNum", "bigSub", "mRaw", "mFragBytes", "mAlpha", "mStatus", "mBytes",
-             "mHref", "mNav", "mTag", "mTap", "mHead", "mMark", "mHash",
-             "cVer", "cCount", "cInterval", "cFirst", "cSpan", "cCrc", "cBytes",
-             "kRatio", "kBits", "dMin", "dMax", "dMean", "dSpan", "dFaults",
-             "gSegs", "gNewest", "gWrap", "gMap"];
-  for (var i = 0; i < ids.length; i++) { set(ids[i], "—"); }
-  set("bigNum", "—", "num");
-  set("bigSub", "—", "sub");
-  $("bigNumLbl").innerHTML = "base64 characters after <code>#</code>";
-  $("bigSubLbl").textContent = "decoded data bytes";
-  $("chart").innerHTML = "";
-  set("chartNote", "");
-  $("tBlocks").innerHTML = "<tr><th>—</th><td>—</td></tr>";
-  $("preview").textContent = "—";
-  show("secChart", false);
-  show("secContainer", false);
-  show("secRing", false);
-  show("secRuler", false);
-  show("degradeRow", false);
-  report = {};
+function getShipment(id, cb) {
+  setTimeout(function () {
+    cb(id && SHIPMENTS.hasOwnProperty(id) ? SHIPMENTS[id] : null);
+  }, MOCK_LOOKUP_MS);
 }
 
-function banner(text, cls) { set("banner", text, "banner" + (cls ? " " + cls : "")); }
-
-function renderTransport(raw, dec) {
-  var nBytes = (dec && dec.bytes) ? dec.bytes.length : 0;
-
-  set("mRaw", raw.length);
-  set("mFragBytes", utf8Bytes(raw));
-  set("mAlpha", dec ? dec.alphabet : "—", dec && /suspect/.test(dec.alphabet) ? "bad" : "");
-
-  if (!dec || !raw.length)   { set("mStatus", "—"); }
-  else if (dec.error)        { set("mStatus", dec.error, "bad"); }
-  else if (dec.dropped)      { set("mStatus", "ok — dropped " + dec.dropped + " char to align group", "warn"); }
-  else                       { set("mStatus", "clean", "ok"); }
-
-  set("mBytes", (dec && dec.error) ? "—" : nBytes);
-  set("mHref", location.href.length);
-
-  var navLen = "n/a";
-  try {
-    var nav = performance.getEntriesByType("navigation")[0];
-    if (nav && nav.name) { navLen = nav.name.length; }
-  } catch (e) { /* not supported */ }
-  if (navLen !== "n/a" && navLen !== location.href.length) {
-    set("mNav", navLen + "  ≠ full URL length", "bad");
-  } else {
-    set("mNav", navLen);
-  }
-
-  // The NDEF URI record's 0x04 prefix stands in for "https://".
-  var onTag = Math.max(0, location.href.length - 8);
-  set("mTag", onTag + " B");
-  set("mTap", (onTag * 8 / 53000 * 1000).toFixed(0) + " ms");
-  set("mHead", (8192 - onTag) + " B free of 8192  (" + (onTag * 100 / 8192).toFixed(1) + " % used)");
-
-  report.chars = raw.length;
-  report.bytes = (dec && dec.error) ? "decode-failed" : nBytes;
-  report.alphabet = dec ? dec.alphabet : "—";
-  report.href = location.href.length;
-  report.nav = navLen;
+function getConfirmation(key) {
+  var raw = null, rec = null;
+  if (key === null) { return demoConfirmation; }
+  try { raw = window.localStorage.getItem(key); } catch (e) { raw = null; }
+  if (raw === null && memStore.hasOwnProperty(key)) { raw = memStore[key]; }
+  if (raw === null) { return null; }
+  try { rec = JSON.parse(raw); } catch (e2) { rec = null; }
+  return rec && typeof rec.email === "string" && typeof rec.at === "number" ? rec : null;
 }
 
-function renderContainer(raw, dec) {
-  var p = parseContainer(dec.bytes, $("degrade").checked);
-
-  if (!p.ok) {
-    banner(p.error, "bad");
-    // The CRC is the only failure the degraded path can help with.
-    if (/CRC mismatch/.test(p.error)) { show("degradeRow", true); }
-    report.mode = "tempcomp";
-    report.status = p.error;
-    return;
-  }
-
-  show("secContainer", true);
-
-  if (p.degraded) {
-    show("degradeRow", true);
-    banner("CRC FAILED — showing unverified data. " +
-           (p.truncated
-              ? p.values.length + " of " + p.count + " samples arrived before the payload ran out."
-              : "The payload decoded fully, so this looks like corruption rather than truncation.") +
-           " Samples decoded before a cut are correct; a bit-flip corrupts everything after it.",
-           "bad");
-  } else {
-    banner("clean — CRC 0x" + hex4(p.crcGot) + " verified", "ok");
-  }
-
-  // headline, range, faults and the block histogram: shared with the ring.
-  var n = renderSeries(p.values, p.faults, p.intervalS, p.blockStats).n;
-
-  if (p.degraded) { $("bigNumLbl").textContent = "samples decoded (unverified)"; }
-
-  set("cVer", "v" + p.version + " / scheme " + p.scheme +
-              (p.scheme === 1 ? " (Rice)" : " (12-bit packed)"));
-  set("cCount", p.count + (p.values.length !== p.count
-        ? "  — only " + p.values.length + " decoded" : ""),
-      p.values.length !== p.count ? "bad" : "");
-  set("cInterval", p.intervalS + " s");
-  set("cFirst", p.firstIndex);
-  set("cSpan", n > 1 ? dur((n - 1) * p.intervalS) : "—");
-  set("cCrc", p.crcOk ? "0x" + hex4(p.crcGot) + " — verified"
-                      : "0x" + hex4(p.crcGot) + " computed, 0x" + hex4(p.crcWant) + " carried",
-      p.crcOk ? "ok" : "bad");
-  set("cBytes", p.size.total + " B = " + p.size.header + " header + " + p.size.payload +
-                " payload + " + p.size.faults + " faults + " + p.size.crc + " CRC");
-
-  // compression — one ratio, one rate, both defined in REBUILD-PLAN section 7
-  if (n > 0) {
-    set("kRatio", (n * 2) + " B → " + p.size.total + " B  =  " +
-                  (n * 2 / p.size.total).toFixed(1) + "×");
-    set("kBits", (p.size.payload * 8 / n).toFixed(2) + " bits/sample");
-  }
-
-  // chart
-  var svg = chartSVG(p.values, p.intervalS, p.firstIndex);
-  if (svg) {
-    show("secChart", true);
-    $("chart").innerHTML = svg;
-    set("chartNote",
-        "Stepped, because the data is quantised to 0.1 °C — a smooth line would imply readings "
-        + "that were never taken. " + (p.faults.length ? "Red bars mark faults; the trace breaks "
-        + "rather than bridging them. " : "")
-        + (n > DOWNSAMPLE_ABOVE ? "Downsampled min/max per column, so spikes survive. " : "")
-        + "Y axis is held to at least 1 °C.", "note");
-  } else if (n > 0) {
-    show("secChart", true);
-    $("chart").innerHTML = "";
-    set("chartNote", "Every sample in this log is a fault — nothing to plot.", "note bad");
-  }
-
-  report.mode = "tempcomp";
-  report.status = p.degraded ? "crc-failed-unverified" : "clean";
-  report.samples = n;
-  report.bits = n ? (p.size.payload * 8 / n).toFixed(2) : "—";
-  report.ratio = n ? (n * 2 / p.size.total).toFixed(1) : "—";
-  report.faults = p.faults.length;
-  report.marker = "—";
-  report.hash = "—";
+function saveConfirmation(key, rec, cb) {
+  setTimeout(function () {
+    if (key === null) {
+      demoConfirmation = rec;
+    } else {
+      var raw = JSON.stringify(rec);
+      memStore[key] = raw;
+      try { window.localStorage.setItem(key, raw); } catch (e) { /* memory only */ }
+    }
+    cb();
+  }, MOCK_SAVE_MS);
 }
 
-/* Shared by both container modes: the numbers that describe a series of
-   samples, whatever framing carried it. */
-function renderSeries(values, faults, intervalS, blockStats) {
-  var n = values.length, i;
-  var lo = null, hi = null, sum = 0, valid = 0;
-
-  for (i = 0; i < n; i++) {
-    if (values[i] === FAULT) { continue; }
-    if (lo === null || values[i] < lo) { lo = values[i]; }
-    if (hi === null || values[i] > hi) { hi = values[i]; }
-    sum += values[i];
-    valid++;
-  }
-
-  set("bigNum", n, "num");
-  $("bigNumLbl").textContent = "samples";
-  set("bigSub", lo === null ? "no valid samples" : t1(lo) + " … " + t1(hi) + " °C", "sub");
-  $("bigSubLbl").textContent = "temperature range";
-
-  set("dMin", lo === null ? "—" : t1(lo) + " °C");
-  set("dMax", hi === null ? "—" : t1(hi) + " °C");
-  set("dMean", valid ? (sum / valid / 10).toFixed(2) + " °C" : "—");
-  set("dSpan", lo === null ? "—" : ((hi - lo) / 10).toFixed(1) + " °C");
-  set("dFaults", faults.length === 0 ? "none"
-        : faults.length + " at index " + faults.slice(0, 24).join(", ") +
-          (faults.length > 24 ? " …" : ""),
-      faults.length ? "warn" : "");
-
-  var rows = [], keys = [], k;
-  for (k in blockStats) { if (blockStats.hasOwnProperty(k)) { keys.push(parseInt(k, 10)); } }
-  keys.sort(function (a, b) { return a - b; });
-  for (i = 0; i < keys.length; i++) {
-    k = keys[i];
-    var label = k === OPT_ZERO ? "zero block" : (k === OPT_ESC ? "escape (raw)" : "Rice k=" + k);
-    var cls = k === OPT_ESC ? ' class="warn"' : "";
-    rows.push("<tr><th>" + esc(label) + "</th><td" + cls + ">" + blockStats[k] + " blocks</td></tr>");
-  }
-  $("tBlocks").innerHTML = rows.length ? rows.join("") : "<tr><th>—</th><td>no blocks</td></tr>";
-
-  return { n: n, lo: lo, hi: hi };
+function clearConfirmation(key) {
+  if (key === null) { demoConfirmation = null; return; }
+  delete memStore[key];
+  try { window.localStorage.removeItem(key); } catch (e) { /* nothing stored */ }
 }
 
-function renderRing(raw, dec) {
-  var p = parseRing(dec.bytes);
-  var i, j;
+/* ===== S11  render ===================================================== */
+/* Outside text - the ID, the email, anything from the URL or storage - only
+   ever goes through textContent. innerHTML is used for static icons and the
+   chart, which is built from numbers. */
 
-  if (!p.ok) {
-    banner(p.error, "bad");
-    report.mode = "ring";
-    report.status = p.error;
-    return;
-  }
+var SELFTEST = { ok: false, msg: "not run" };
+var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  show("secRing", true);
-  show("secContainer", true);
+var gen = 0;            // bumped by every render; late callbacks compare it
+var renderMs = 0;       // demo mode anchors its times here
+var loc = null;         // parseLocation()
+var ring = null;        // a decoded log, or null
+var ringError = null;   // why there is none
+var emptyRing = null;   // a valid ring that holds no sample yet
+var shipment = null;    // undefined while loading, null if unknown
+var pending = false;    // a confirmation is being saved
 
-  var damagedNote = p.segDamaged
-        ? p.segDamaged + " segment" + (p.segDamaged === 1 ? "" : "s") + " failed the CRC and " +
-          (p.segDamaged === 1 ? "was" : "were") + " skipped — the rest are unaffected"
-        : null;
+/* Literal colours: var() inside an SVG fill attribute is not reliable
+   everywhere. Same values as --ok, --warn, --bad and --none above. */
+var COLORS = { ok: "#2fbf5b", warn: "#eea21b", bad: "#de4338", none: "#b8b8c0" };
 
-  if (damagedNote) { banner("partly readable — " + damagedNote, "warn"); }
-  else if (p.gaps) { banner("readable, but " + p.missing + " sample(s) are missing between segments", "warn"); }
-  else             { banner("clean — every segment verified", "ok"); }
-
-  var st = renderSeries(p.values, p.faults, p.intervalS, p.blockStats);
-  var n = st.n;
-
-  /* ---- the ring itself ---- */
-  set("gSegs", p.segOk + " of " + p.present + " readable" +
-               (p.segEmpty ? ", " + p.segEmpty + " unused" : "") +
-               (p.segDamaged ? ", " + p.segDamaged + " damaged" : "") +
-               "  (tag holds " + p.segTotal + " × " + p.segBytes + " B)",
-      p.segDamaged ? "bad" : "ok");
-  set("gNewest", "#" + p.newest + (p.intervalS ? "  — the log ends " +
-        (n > 1 ? dur((n - 1) * p.intervalS) + " after its oldest surviving sample" : "here") : ""));
-  set("gWrap", p.wrapped
-        ? "yes — " + p.overwritten + " sample(s) overwritten, oldest kept is #" + p.indices[0]
-        : "no — nothing has been overwritten yet",
-      p.wrapped ? "warn" : "ok");
-
-  var map = [], cls;
-  for (i = 0; i < p.segs.length; i++) {
-    var sg = p.segs[i];
-    var ch = sg.bad ? "X" : (sg.empty ? "·" : (sg.slot === p.openSeg ? "#" : "="));
-    cls = sg.bad ? ' class="bad"' : (sg.slot === p.openSeg ? ' class="ok"' : "");
-    map.push("<span" + cls + ">" + ch + "</span>");
-  }
-  set("gMap", "");
-  $("gMap").innerHTML = "<code>" + map.join("") + "</code>  (" + p.segs.length + " shown, " +
-                        "open is #" + p.openSeg + ")";
-
-  /* ---- the container table, ring flavour ---- */
-  set("cVer", "v2 / scheme 1 (Rice), cyclic");
-  set("cCount", n + " retained" + (p.wrapped ? ", of " + (p.newest + 1) + " ever logged" : ""));
-  set("cInterval", p.intervalS + " s");
-  set("cFirst", p.indices[0]);
-  set("cSpan", n > 1 ? dur((p.newest - p.indices[0]) * p.intervalS) : "—");
-  set("cCrc", p.segOk + " segment CRC" + (p.segOk === 1 ? "" : "s") + " verified" +
-              (p.segDamaged ? ", " + p.segDamaged + " failed" : ""),
-      p.segDamaged ? "bad" : "ok");
-  set("cBytes", p.size.total + " B = " + p.size.global + " global header + " +
-                p.present + " × " + p.segBytes + " B segments (" +
-                p.size.payload + " B of that is sample data)" +
-                (p.tail ? " + " + p.tail + " B ignored tail" : ""));
-
-  if (n > 0) {
-    set("kRatio", (n * 2) + " B → " + p.size.total + " B  =  " +
-                  (n * 2 / p.size.total).toFixed(1) + "×");
-    set("kBits", (p.size.payload * 8 / n).toFixed(2) + " bits/sample");
-  }
-
-  /* ---- chart ---- */
-  /* Plotted against absolute index, so a gap left by a damaged segment shows
-     as a break rather than silently closing up. */
-  var dense = [], want = p.indices[0], k = 0;
-  for (i = 0; i < p.indices.length; i++) {
-    while (want < p.indices[i]) { dense.push(FAULT); want++; }
-    dense.push(p.values[i]);
-    want++;
-  }
-
-  var svg = chartSVG(dense, p.intervalS, p.indices[0]);
-  if (svg) {
-    show("secChart", true);
-    $("chart").innerHTML = svg;
-    set("chartNote",
-        "Stepped, because the data is quantised to 0.1 °C. "
-        + (p.faults.length ? "Red bars mark faults; the trace breaks rather than bridging them. " : "")
-        + (p.gaps ? "Breaks also appear where a segment is missing. " : "")
-        + (dense.length > DOWNSAMPLE_ABOVE ? "Downsampled min/max per column, so spikes survive. " : "")
-        + "Y axis is held to at least 1 °C.", "note");
-  }
-
-  report.mode = "ring";
-  report.status = p.segDamaged ? "segments-damaged" : (p.gaps ? "gaps" : "clean");
-  report.samples = n;
-  report.bits = n ? (p.size.payload * 8 / n).toFixed(2) : "—";
-  report.ratio = n ? (n * 2 / p.size.total).toFixed(1) : "—";
-  report.faults = p.faults.length;
-  report.marker = "—";
-  report.hash = "—";
+function heartSVG(state) {
+  var c = COLORS[state] || COLORS.none, mark;
+  if (state === "ok") { mark = '<path d="M77 77l8 8 15-16" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>'; }
+  else if (state === "bad") { mark = '<path d="M80 68l16 16M96 68l-16 16" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/>'; }
+  else { mark = '<path d="M88 64v14" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/><circle cx="88" cy="88" r="3.8" fill="#fff"/>'; }
+  return '<svg class="icon" viewBox="0 0 124 112" aria-hidden="true">' +
+    '<path fill="' + c + '" d="M55 100C25 78 5 61 5 38 5 20 18 7 35 7c10 0 18 5 23 13 5-8 13-13 23-13 17 0 30 13 30 31 0 23-20 40-50 62l-3 2z"/>' +
+    '<circle cx="88" cy="76" r="25" fill="' + c + '" stroke="#fff" stroke-width="5"/>' + mark + '</svg>';
 }
 
-function renderRuler(raw, dec) {
-  show("secRuler", true);
+function circleSVG(state) {
+  var c = COLORS[state] || COLORS.none, mark;
+  if (state === "ok") { mark = '<path d="M28 51l14 14 30-31" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>'; }
+  else if (state === "bad") { mark = '<path d="M34 34l32 32M66 34L34 66" stroke="#fff" stroke-width="9" stroke-linecap="round"/>'; }
+  else { mark = '<path d="M32 50h36" stroke="#fff" stroke-width="9" stroke-linecap="round"/>'; }
+  return '<svg class="icon round" viewBox="0 0 100 100" aria-hidden="true">' +
+    '<circle cx="50" cy="50" r="48" fill="' + c + '"/>' + mark + '</svg>';
+}
 
-  set("bigNum", raw.length, "num" + (raw.length === 0 ? " empty" : ""));
-  $("bigNumLbl").innerHTML = "base64 characters after <code>#</code>";
-  set("bigSub", dec.error ? "decode failed" : dec.bytes.length, "sub" + (dec.error ? " bad" : ""));
-  $("bigSubLbl").textContent = "decoded data bytes";
+function idText() {
+  if (!loc || !loc.idValid) { return "unknown"; }
+  if (loc.id === UNPROVISIONED_ID) { return "no Device ID"; }
+  return fmtId(loc.id);
+}
 
-  banner("ruler payload — fragment length probe, not a tempcomp container", "");
+function nowMs() { return loc && loc.demo ? renderMs : new Date().getTime(); }
 
-  var mark = lastIntactMarker(dec.text);
-  set("mMark", mark === null ? "none found" : mark);
-  $("preview").textContent = dec.error ? "(cannot decode)" : preview(dec.text);
-
-  report.mode = "ruler";
-  report.status = dec.error || (dec.dropped ? "dropped-" + dec.dropped : "clean");
-  report.marker = mark === null ? "none" : mark;
-  report.samples = "—";
-  report.bits = "—";
-  report.ratio = "—";
-  report.faults = "—";
-  report.hash = "…";
-
-  hash(dec.bytes, function (h) { set("mHash", h); report.hash = h; });
+function currentKey() {
+  return confirmationKey(loc && loc.idValid ? loc.id : null,
+                         ring ? ring.startUtc : (emptyRing ? emptyRing.startUtc : null),
+                         loc ? loc.demo : false);
 }
 
 function render() {
-  resetOutputs();
+  var myGen, dec, p;
 
-  var raw = location.hash.slice(1);
+  gen++;
+  myGen = gen;
+  renderMs = new Date().getTime();
+  loc = parseLocation(location.search, location.hash);
+  ring = null; ringError = null; emptyRing = null; pending = false; demoConfirmation = null;
 
-  set("eUA", navigator.userAgent);
-  set("eScreen", screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x");
-  set("eCharset", document.characterSet || "?");
-  set("eRef", document.referrer || "(none)");
-
-  if (!raw.length) {
-    renderTransport(raw, null);
-    banner("no fragment — append #… to the URL, or load a known payload below", "");
-    set("bigNum", "—", "num empty");
-    return;
+  if (SELFTEST.ok && loc.frag) {
+    dec = b64decode(loc.frag);
+    if (dec.error) {
+      ringError = dec.error;
+    } else {
+      p = parseRing(dec.bytes);
+      if (p.ok) { ring = p; }
+      else if (/log is empty/.test(p.error)) { emptyRing = p; }
+      else { ringError = p.error; }
+    }
   }
 
-  var dec = b64decode(raw);
-  renderTransport(raw, dec);
-
-  if (dec.error) {
-    banner(dec.error, "bad");
-    set("bigNum", raw.length, "num");
-    set("bigSub", "decode failed", "sub bad");
-    return;
+  if (loc.idValid && loc.id !== UNPROVISIONED_ID) {
+    shipment = undefined;
+    getShipment(loc.id, function (rec) {
+      if (myGen !== gen) { return; }       // a newer tap has taken over
+      shipment = rec;
+      paint();
+    });
+  } else {
+    shipment = null;
   }
 
-  /* S8 — detection, on the version byte alone. 'T','L',0x01 base64-encodes to
-     exactly "VEwB" and 0x02 to "VEwC". Anything else is a ruler payload. */
-  if      (raw.slice(0, 4) === MAGIC_B64)    { renderContainer(raw, dec); }
-  else if (raw.slice(0, 4) === MAGIC_B64_V2) { renderRing(raw, dec); }
-  else                                       { renderRuler(raw, dec); }
+  $("email").value = "";
+  setText("emailHint", "");
+  setText("resetNote", "");
+  $("btnConfirm").disabled = false;
+  setText("btnConfirm", "Confirm Reception");
+  paint();
 }
 
-/* ===== S11  generator, canned payloads, copy — mostly carried over ===== */
+function paint() {
+  var now = nowMs(), conf = getConfirmation(currentKey()), m = null;
 
-function copy(text, noteEl) {
-  function done(ok) { noteEl.textContent = ok ? "copied" : "copy failed — select manually"; }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
-    return;
-  }
-  var ta = document.createElement("textarea");
-  ta.value = text;
-  ta.setAttribute("readonly", "");
-  ta.style.position = "fixed";
-  ta.style.top = "-1000px";
-  document.body.appendChild(ta);
-  ta.select();
-  var ok = false;
-  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
-  document.body.removeChild(ta);
-  done(ok);
+  setText("detUa", navigator.userAgent);
+  setText("detScreen", screen.width + "×" + screen.height + " @" + (window.devicePixelRatio || 1) + "x");
+  setText("detSelf", SELFTEST.ok ? "PASS" : SELFTEST.msg);
+  setClass("detSelf", SELFTEST.ok ? "ok" : "bad");
+  setText("detSource", loc && loc.demo ? "demo log (demo=1)" : "live logger");
+
+  if (ring) { m = summarize(ring, now, shipment || null, conf, loc.demo); }
+  paintSending(m);
+  paintReceiving(m, conf);
+  paintDetails(m, conf);
 }
 
-$("btnCopy").addEventListener("click", function () {
-  var row = [
-    new Date().toISOString(),
-    report.mode || "—", report.chars, report.bytes, report.alphabet, report.status,
-    report.href, report.nav, report.samples, report.bits, report.ratio,
-    report.faults, report.marker, report.hash,
-    navigator.userAgent
-  ].join("\t");
-  copy(row, $("copyNote"));
+function paintSending(m) {
+  var noData = SELFTEST.ok && !loc.frag;
+
+  show("sendMsg", false);
+  show("healthBlock", true);
+  show("sendId", true);
+  show("sendTemp", true);
+  show("sendKv", true);
+  setText("sendId", idText());
+  setText("sendTemp", "—");
+  setText("lastMeas", "—");
+  setText("logInterval", "—");
+  setClass("healthReason", "reason");
+
+  if (!SELFTEST.ok || noData || ringError || emptyRing) {
+    show("sendTemp", false);
+    show("sendKv", !!emptyRing);
+    if (noData) {
+      show("healthBlock", false);
+      show("sendId", false);
+      setText("sendMsg", "Tap a LIBERO lite logger to read it");
+      setClass("sendMsg", "msg");
+    } else if (emptyRing) {
+      show("healthBlock", false);
+      setText("sendMsg", "Logging started — no measurement yet");
+      setClass("sendMsg", "msg");
+      setText("logInterval", fmtInterval(emptyRing.intervalS));
+    } else {
+      $("healthIcon").innerHTML = heartSVG("bad");
+      setText("healthReason", !SELFTEST.ok ? "Decoder self-test failed" : "Log unreadable: " + ringError);
+      setClass("healthReason", "reason bad");
+      if (!SELFTEST.ok) { show("sendId", false); }
+    }
+    if (noData || emptyRing) { show("sendMsg", true); }
+    return;
+  }
+
+  $("healthIcon").innerHTML = heartSVG(m.health.state);
+  setText("healthReason", m.health.text);
+  setClass("healthReason", "reason" + (m.health.state === "ok" ? "" : " " + m.health.state));
+  setText("sendTemp", m.current ? degC(m.current.value) : "n/a");
+  setText("lastMeas", m.lastText);
+  setText("logInterval", fmtInterval(m.intervalS));
+}
+
+function paintReceiving(m, conf) {
+  var msg = null, known = !!shipment, statsOn;
+
+  setText("metaId", loc && loc.idValid ? idText() : "unknown");
+  if (shipment === undefined) {
+    setText("metaShip", "loading…"); setText("metaSite", "loading…"); setText("metaProduct", "loading…");
+  } else if (shipment) {
+    setText("metaShip", shipment.shipmentId);
+    setText("metaSite", shipment.site + " / " + shipment.country);
+    setText("metaProduct", shipment.product);
+  } else {
+    setText("metaShip", "—"); setText("metaSite", "—"); setText("metaProduct", "—");
+  }
+
+  if (!SELFTEST.ok) { msg = "Decoder self-test failed"; }
+  else if (!loc.frag) { msg = "Tap a LIBERO lite logger to read it"; }
+  else if (!loc.idValid) { msg = "No Device ID in this link"; }
+  else if (loc.id === UNPROVISIONED_ID) { msg = "This logger has no Device ID"; }
+  else if (shipment === null) { msg = "No shipment registered for this device"; }
+
+  setText("recvMsg", msg || "");
+  setClass("recvMsg", "msg" + (!SELFTEST.ok ? " bad" : ""));
+  show("recvMsg", !!msg);
+  show("recvMeta", SELFTEST.ok && !!loc.frag);
+
+  show("recvBefore", !msg && !conf);
+  show("recvAfter", !msg && !!conf && known);
+  $("btnConfirm").disabled = pending || !known;
+
+  if (conf && known) {
+    var alarm = m ? m.alarm
+      : { state: "none", text: ringError ? "Log unreadable — nothing to judge" : "No readings to judge" };
+    $("alarmIcon").innerHTML = circleSVG(alarm.state);
+    setText("alarmReason", alarm.text);
+    setClass("alarmReason", "reason" + (alarm.state === "bad" ? " bad" : ""));
+    setText("confirmedLine", "Reception confirmed by " + conf.email + ", " + fmtUTC(conf.at));
+  }
+
+  statsOn = SELFTEST.ok && !!loc.frag && !ringError;
+  show("recvStats", statsOn);
+  setText("statMax", m && m.max ? degC(m.max.value) + " / " + fmtWhen(m.max.time, m.mode) : "—");
+  setText("statMin", m && m.min ? degC(m.min.value) + " / " + fmtWhen(m.min.time, m.mode) : "—");
+}
+
+function paintDetails(m, conf) {
+  var dense, want, i, first, marker, note;
+
+  $("chart").innerHTML = "";
+  setText("chartNote", "");
+  setText("detCrc", "—"); setClass("detCrc", "");
+  setText("detBits", "—");
+  setText("detStart", "—");
+  setText("detSamples", "—");
+  setText("detMissing", "—");
+  show("btnReset", !!(loc && loc.frag));
+
+  if (ringError) {
+    setText("detCrc", "FAIL — " + ringError);
+    setClass("detCrc", "bad");
+    return;
+  }
+  if (emptyRing) {
+    setText("detCrc", "OK — empty log");
+    setClass("detCrc", "ok");
+    setText("detStart", emptyRing.startUtc !== null ? fmtUTC(emptyRing.startUtc * 1000) : "not recorded (old format)");
+    setText("detSamples", "0");
+    return;
+  }
+  if (!m) { return; }
+
+  setText("detCrc", m.crcText);
+  setClass("detCrc", m.crcOk ? "ok" : "bad");
+  setText("detBits", m.bitsText);
+  setText("detStart", m.startText);
+  setText("detSamples", m.samplesText);
+  setText("detMissing", m.missingText);
+
+  /* Plotted against absolute index, so a gap left by a damaged segment shows
+     as a break rather than silently closing up. */
+  dense = [];
+  first = ring.indices[0];
+  want = first;
+  for (i = 0; i < ring.indices.length; i++) {
+    while (want < ring.indices[i]) { dense.push(FAULT); want++; }
+    dense.push(ring.values[i]);
+    want++;
+  }
+  marker = conf ? (conf.at - m.at(first)) / (ring.intervalS * 1000) : null;
+
+  var svg = chartSVG(dense, ring.intervalS, first, {
+    label: function (k) { return (m.mode === "estimated" ? "≈ " : "") + fmtShort(m.at(first + k)); },
+    marker: marker
+  });
+  if (svg) { $("chart").innerHTML = svg; }
+
+  note = "Stepped, because readings come in 0.1 °C steps. Times in UTC" +
+         (m.mode === "estimated" ? ", estimated" : "") + ".";
+  if (m.missing.length) { note += " Red lines mark missing readings."; }
+  if (conf) { note += " The dashed line marks the reception confirmation."; }
+  if (dense.length > DOWNSAMPLE_ABOVE) { note += " Each column shows its highest and lowest reading."; }
+  if (!svg) { note = "Every reading in this log is a sensor fault — nothing to plot."; }
+  setText("chartNote", note);
+}
+
+/* ===== S12  events and start-up ======================================= */
+
+function selectTab(id) {
+  var tabs = ["tabSend", "tabRecv", "tabDet"], i, t, on;
+  for (i = 0; i < tabs.length; i++) {
+    t = $(tabs[i]);
+    on = tabs[i] === id;
+    t.className = on ? "tab on" : "tab";
+    t.setAttribute("aria-selected", on ? "true" : "false");
+    show(t.getAttribute("data-pane"), on);
+  }
+}
+
+$("tabSend").addEventListener("click", function () { selectTab("tabSend"); });
+$("tabRecv").addEventListener("click", function () { selectTab("tabRecv"); });
+$("tabDet").addEventListener("click", function () { selectTab("tabDet"); });
+
+$("recvBefore").addEventListener("submit", function (ev) {
+  var email = $("email").value.replace(/^\s+|\s+$/g, ""), key, myGen, rec;
+  ev.preventDefault();
+  if (pending || !shipment) { return; }
+  if (!EMAIL_RE.test(email)) {
+    setText("emailHint", "Please enter a valid email address");
+    return;
+  }
+  setText("emailHint", "");
+  pending = true;
+  $("btnConfirm").disabled = true;
+  setText("btnConfirm", "Confirming…");
+  key = currentKey();
+  myGen = gen;
+  rec = { email: email, at: new Date().getTime() };
+  saveConfirmation(key, rec, function () {
+    if (myGen !== gen) { return; }
+    pending = false;
+    setText("btnConfirm", "Confirm Reception");
+    paint();
+  });
 });
 
-var genURL = "";
-
-function generate() {
-  var n = parseInt($("genN").value, 10);
-  if (!(n > 0)) { $("genOut").textContent = "enter a size > 0"; genURL = ""; return; }
-
-  var data = makeRuler(n);
-  var frag = b64encode(data, !$("genStd").checked);
-  var base = location.href.split("#")[0];
-  genURL = base + "#" + frag;
-
-  $("genOut").textContent =
-    genURL.slice(0, 60) + "\n  … \n" + genURL.slice(-40) + "\n\n" +
-    "data bytes     : " + n + "\n" +
-    "fragment chars : " + frag.length + "   (×" + (frag.length / n).toFixed(3) + ")\n" +
-    "URL chars      : " + genURL.length + "\n" +
-    "on-tag bytes   : " + (genURL.length - 8) + "   (NDEF URI prefix 0x04 strips \"https://\")";
-  $("genNote").textContent = "";
-}
-
-$("btnGen").addEventListener("click", generate);
-$("btnGenCopy").addEventListener("click", function () {
-  if (genURL) { copy(genURL, $("genNote")); } else { $("genNote").textContent = "generate first"; }
+$("btnReset").addEventListener("click", function () {
+  clearConfirmation(currentKey());
+  pending = false;
+  $("btnConfirm").disabled = false;
+  setText("btnConfirm", "Confirm Reception");
+  setText("resetNote", "done");
+  paint();
 });
 
-function load(frag) {
-  $("degrade").checked = false;
-  if (location.hash.slice(1) === frag) { render(); } else { location.hash = frag; }
-}
-$("btnGolden").addEventListener("click", function () { load(GOLDEN_B64); });
-$("btnReal1").addEventListener("click", function () { load(REAL_1); });
-$("btnReal2").addEventListener("click", function () { load(REAL_2); });
-
-$("degrade").addEventListener("change", render);
 window.addEventListener("hashchange", render);
 
-var st = selfTest();
-set("selftest", st.msg, "banner " + (st.ok ? "ok" : "bad"));
+/* Relative times ("7 minutes ago") move on while the page stays open - from
+   the data of the tap, which does not change. Demo mode keeps its fixed age. */
+setInterval(function () {
+  if (loc && !loc.demo && ring) { paint(); }
+}, 30000);
 
+SELFTEST = selfTest();
 render();
-generate();
 </script>
-
 </body>
 </html>

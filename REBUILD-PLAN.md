@@ -1,5 +1,8 @@
 # NFCtest rebuild — feasibility report
 
+> **Superseded** by `../../LIBERO-LITE-PLAN.md`: the page is now the LIBERO lite Read-Out. This
+> document stays as the record of the decoder's design, which the new page keeps.
+
 Assessment and plan for rebuilding `index.html` so it accepts a tempcomp v1 Base64URL string,
 decodes it, plots the samples over time, and reports the transport and compression properties.
 
