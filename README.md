@@ -1,10 +1,14 @@
 # NFCTest
 
-A single-page tool that does two things from a URL fragment, auto-detecting which:
+A single-page tool that does three things from a URL fragment, auto-detecting which:
 
-1. **Decodes a tempcomp v1 temperature log** — the Base64URL string a NUCLEO-L053R8 logger
-   emits — and plots it, with the transport and compression properties alongside.
-2. **Measures how much URL-fragment payload a phone actually delivers** when it reads an NFC
+1. **Decodes a v1 temperature log** — one container, the Base64URL string a NUCLEO-L053R8
+   logger emits — and plots it, with the transport and compression properties alongside.
+2. **Decodes a v2 cyclic log** — the same samples, but written round and round a fixed set of
+   segments on an 8 KB tag, overwriting the oldest when it runs out of room. Adds what the ring
+   itself says: which segments are readable, how many samples have been overwritten, and which
+   sample is the newest.
+3. **Measures how much URL-fragment payload a phone actually delivers** when it reads an NFC
    tag, using a self-describing ruler payload.
 
 **Live page:** https://kaistein01.github.io/NFCtest/
@@ -13,13 +17,38 @@ The fragment (everything after `#`) is never sent to a server, so every limit yo
 client-side: the tag, the phone's NFC stack, or the browser's URL handling.
 
 Rebuild rationale and the decisions behind it: [`REBUILD-PLAN.md`](REBUILD-PLAN.md).
-Format spec: `../../COMPRESSION-PLAN.md` section 6. Decode procedure: section 8.
+Format spec: `../../COMPRESSION-PLAN.md` section 6 (v1) and `../../NFCLOG-64K-PLAN.md`
+section 13 (v2). Decode procedure: COMPRESSION-PLAN section 8 and NFCLOG-64K-PLAN section 13.4.
 
 ## Which mode
 
-A tempcomp v1 blob always begins with the bytes `'T' 'L' 0x01`, which base64-encode to the
-literal prefix **`VEwB`**. That is the whole detection rule — anything else is treated as a
-ruler payload.
+The version byte decides, and it is visible in the first four characters:
+
+| Fragment starts | Bytes | Mode |
+|---|---|---|
+| **`VEwB`** | `'T' 'L' 0x01` | one v1 container |
+| **`VEwC`** | `'T' 'L' 0x02` | a v2 cyclic log |
+| anything else | — | ruler payload |
+
+## Cyclic buffer mode
+
+A v2 fragment is a global header followed by fixed-size segments, each of which decodes on its
+own: its own starting temperature, its own sample count and its own CRC. The writer fills them
+in turn and, when the last one is full, goes back to the first and overwrites it.
+
+So **the order on the tag is not the order in time.** Every segment records the sample index it
+starts at, and the page sorts by that. Three things follow, and the page reports all three:
+
+- **Overflow is exact, not estimated.** The oldest surviving segment starts at some sample
+  index; everything before it has been overwritten, and that index is the count.
+- **Damage is contained.** A segment whose CRC fails costs only itself — it is listed as damaged
+  and skipped, the others still plot, and the hole shows as a break in the trace rather than
+  quietly closing up.
+- **The newest sample is named.** The global header also says which segment is open, which is
+  cross-checked against the segment indices.
+
+The segment map shows the whole ring at a glance: `#` is being written now, `=` holds data,
+`·` is unused, `X` failed its CRC.
 
 ## Temperature mode
 
@@ -104,6 +133,11 @@ The page checks its own decoder on load, in the browser being used, against an e
 deltas, a 32-sample zero-delta run, two faults, both clamp limits, a jump wide enough to force
 the escape option, and a negative ramp.
 
+**The same 70 samples are checked twice**, once as a v1 container and once as a one-segment v2
+ring. Both are produced by the firmware, which checks them too, so those two strings are the one
+place where the encoder and this page have to agree — and the two formats must yield identical
+samples.
+
 If that banner is not green, nothing else on the page should be believed.
 
 Three known payloads are one tap away under **Load a known payload** — the golden vector and
@@ -169,7 +203,28 @@ have no YAML front matter — an invisible invariant that a future edit could br
 
 The decoder is spliced out of `index.html` and run under Windows' JScript engine by
 `run-jstest.ps1` in the session scratchpad — so what is tested is the source that ships, not a
-transcription. 47 checks: the golden vector, both real logs (sizes, rare-value fingerprints,
-fault position and its intact neighbours, bits/sample, ratio, block statistics), five rejection
-cases, degraded decode of a truncated payload with every surviving sample matching the intact
-decode, and seven chart assertions including fault-breaking and the minimum-span floor.
+transcription. **78 checks.**
+
+**v1, 47 checks:** the golden vector, both real logs (sizes, rare-value fingerprints, fault
+position and its intact neighbours, bits/sample, ratio, block statistics), five rejection cases,
+degraded decode of a truncated payload with every surviving sample matching the intact decode,
+and seven chart assertions including fault-breaking and the minimum-span floor.
+
+**v2, 31 checks.** The reference vector first: the same 70 samples the v1 vector carries, but as
+a one-segment ring, and it must decode to **exactly the same values** — if the two disagree, one
+of the two decoders is wrong. Then rings built inside the harness by copying that real segment
+and restamping its header, which covers what a single vector cannot:
+
+- two segments joining into one series, and slots **out of order in time**;
+- a **gap** between segments: counted, sized, and broken in the chart rather than closed up;
+- a **damaged segment** skipped while its neighbours still decode, and the all-damaged case
+  rejected;
+- an **unused segment** (count 0) skipped;
+- **overflow** derived from the oldest surviving index, and the newest sample named;
+- a **fragment cut mid-segment**, keeping every whole segment before the cut;
+- rejections: bad global CRC, unknown version, segment size that is not a multiple of 3.
+
+**Against real hardware.** The 8116-character fragment produced by the firmware's ring test —
+17 segments, wrapped, 430 samples overwritten — was read back off the tag and decoded by this
+page's own parser: 3431 samples, 7 faults, **every one identical to what the board echoed as it
+logged them**.

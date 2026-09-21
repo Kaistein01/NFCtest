@@ -131,6 +131,25 @@
   <p class="note" id="chartNote"></p>
 </div>
 
+<!-- cyclic buffer, v2 only ------------------------------------------------ -->
+<div id="secRing" class="hide">
+  <h2>Cyclic buffer</h2>
+  <table>
+    <tr><th>Segments</th>       <td id="gSegs">—</td></tr>
+    <tr><th>Newest sample</th>  <td id="gNewest">—</td></tr>
+    <tr><th>Overflow</th>       <td id="gWrap">—</td></tr>
+    <tr><th>Segment map</th>    <td id="gMap">—</td></tr>
+  </table>
+  <p class="note">
+    The log is written round and round a fixed set of segments, overwriting the oldest when it
+    runs out of room. Each segment carries the sample index it starts at and its own CRC, so the
+    order on the tag is not the order in time, a damaged segment costs only itself, and the
+    oldest surviving index says exactly how many samples have been overwritten. In the map,
+    <code>#</code> is the segment being written now, <code>=</code> holds data, <code>·</code> is
+    unused and <code>X</code> failed its CRC.
+  </p>
+</div>
+
 <div id="secContainer" class="hide">
   <h2>Container</h2>
   <table>
@@ -343,12 +362,17 @@ function crc16(bytes, len) {
    without this cap a bad payload would spin forever and hang the phone. */
 var UNARY_CAP = 1024;
 
-function BitReader(bytes, off) { this.b = bytes; this.pos = off; this.bit = 0; }
+/* `end` bounds the reader, so a segment with a corrupt sample count cannot
+   read its way into the next one. v1 leaves it out and gets the whole blob. */
+function BitReader(bytes, off, end) {
+  this.b = bytes; this.pos = off; this.bit = 0;
+  this.end = (end === undefined) ? bytes.length : end;
+}
 
 BitReader.prototype.read = function (n) {
   var v = 0;
   for (var i = 0; i < n; i++) {
-    if (this.pos >= this.b.length) { throw new Error("payload ran off the end of the blob"); }
+    if (this.pos >= this.end) { throw new Error("payload ran off the end of the blob"); }
     v = (v << 1) | ((this.b[this.pos] >> (7 - this.bit)) & 1);
     this.bit++;
     if (this.bit === 8) { this.bit = 0; this.pos++; }
@@ -382,6 +406,51 @@ var TRAILER_LEN = 2;
 
 function signext(v, bits) { return (v & (1 << (bits - 1))) ? v - (1 << bits) : v; }
 function unzig(u) { return (u >>> 1) ^ -(u & 1); }
+
+/* CRC over a range, optionally treating two bytes as zero — which is how a v2
+   segment's CRC covers the segment including the field holding it. */
+function crc16Range(bytes, off, len, zeroAt) {
+  var crc = 0xFFFF, i, j, b;
+  for (i = 0; i < len; i++) {
+    b = (zeroAt >= 0 && (i === zeroAt || i === zeroAt + 1)) ? 0 : bytes[off + i];
+    crc ^= b << 8;
+    for (j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? (((crc << 1) ^ 0x1021) & 0xFFFF) : ((crc << 1) & 0xFFFF);
+    }
+  }
+  return crc;
+}
+
+/* The Rice payload of COMPRESSION-PLAN section 6.2, appended to `vals`.
+   Shared by the v1 container and every v2 segment, so both read the same bits
+   the same way — and so a truncated v1 payload still keeps what it decoded,
+   which is why the caller owns the array. Throws on a malformed stream. */
+function decodeRice(br, count, block, stats, vals) {
+  var prev, m, opt, j, q, rem;
+
+  if (count <= 0) { return vals; }
+  prev = signext(br.read(12), 12);
+  vals.push(prev);
+  while (vals.length < count) {
+    m = Math.min(block, count - vals.length);
+    opt = br.read(4);
+    if (opt === 15) { throw new Error("reserved block option 15"); }
+    if (stats) { stats[opt] = (stats[opt] || 0) + 1; }
+    if (opt === OPT_ZERO) {
+      for (j = 0; j < m; j++) { vals.push(prev); }
+    } else if (opt === OPT_ESC) {
+      for (j = 0; j < m; j++) { prev += unzig(br.read(ESC_BITS)); vals.push(prev); }
+    } else {
+      for (j = 0; j < m; j++) {
+        q = br.unary();
+        rem = opt ? br.read(opt) : 0;
+        prev += unzig((q << opt) | rem);
+        vals.push(prev);
+      }
+    }
+  }
+  return vals;
+}
 
 function parseContainer(bytes, allowBadCrc) {
   var r = {
@@ -428,32 +497,13 @@ function parseContainer(bytes, allowBadCrc) {
   if (bytes[14] !== 0) { r.error = "unknown scale_code " + bytes[14]; return r; }
 
   var br = new BitReader(bytes, HEADER_LEN);
-  var vals = [], stats = {}, i, j, m, opt, q, rem, prev;
+  var vals = [], stats = {}, i;
 
   try {
     if (r.scheme === 0) {
       for (i = 0; i < r.count; i++) { vals.push(signext(br.read(12), 12)); }
-    } else if (r.count > 0) {
-      prev = signext(br.read(12), 12);
-      vals.push(prev);
-      while (vals.length < r.count) {
-        m = Math.min(r.block, r.count - vals.length);
-        opt = br.read(4);
-        if (opt === 15) { throw new Error("reserved block option 15"); }
-        stats[opt] = (stats[opt] || 0) + 1;
-        if (opt === OPT_ZERO) {
-          for (j = 0; j < m; j++) { vals.push(prev); }
-        } else if (opt === OPT_ESC) {
-          for (j = 0; j < m; j++) { prev += unzig(br.read(ESC_BITS)); vals.push(prev); }
-        } else {
-          for (j = 0; j < m; j++) {
-            q = br.unary();
-            rem = opt ? br.read(opt) : 0;
-            prev += unzig((q << opt) | rem);
-            vals.push(prev);
-          }
-        }
-      }
+    } else {
+      decodeRice(br, r.count, r.block, stats, vals);
     }
   } catch (e) {
     // A verified blob must decode. An unverified one may simply have been cut,
@@ -493,6 +543,142 @@ function parseContainer(bytes, allowBadCrc) {
   return r;
 }
 
+/* ===== S5b  ring parser, format v2 ===================================== */
+/* A cyclic log: a global header, then fixed-size segments that each decode on
+   their own. Segments are written round-robin and the oldest is overwritten,
+   so the order on the tag is not the order in time — each segment says which
+   sample it starts at, and this puts them back in order.
+   Format in NFCLOG-64K-PLAN.md section 13. */
+
+var MAGIC_B64_V2 = "VEwC";   // 'T','L',0x02
+var V2_GLOBAL    = 18;
+var V2_SEG_HDR   = 9;
+
+function parseRing(bytes) {
+  var r = {
+    ok: false, error: null, version: 2, scheme: 0, intervalS: 0,
+    segBytes: 0, segTotal: 0, openSeg: 0, wrapped: false, present: 0,
+    values: [], indices: [], faults: [], blockStats: {}, segs: [],
+    segOk: 0, segDamaged: 0, segEmpty: 0, gaps: 0, missing: 0,
+    overwritten: 0, newest: 0, tail: 0,
+    size: { global: V2_GLOBAL, payload: 0, total: bytes.length }
+  };
+  var i, j, s;
+
+  if (bytes.length < V2_GLOBAL) { r.error = "shorter than a v2 global header"; return r; }
+  if (bytes[0] !== 0x54 || bytes[1] !== 0x4C) { r.error = "bad magic"; return r; }
+  if (bytes[2] !== 2) { r.error = "format version " + bytes[2] + " — this page knows 1 and 2"; return r; }
+
+  var gWant = bytes[16] | (bytes[17] << 8);
+  var gGot  = crc16Range(bytes, 0, 16, -1);
+  if (gGot !== gWant) {
+    r.error = "global header CRC mismatch: computed 0x" + hex4(gGot) + ", carries 0x" + hex4(gWant);
+    return r;
+  }
+
+  r.scheme    = bytes[3];
+  r.intervalS = bytes[4] | (bytes[5] << 8);
+  r.segBytes  = bytes[6] | (bytes[7] << 8);
+  r.segTotal  = bytes[8];
+  r.openSeg   = bytes[9];
+  r.wrapped   = (bytes[10] & 1) !== 0;
+
+  var bps   = bytes[11];
+  var block = 1 << bytes[12];
+
+  if (r.scheme !== 1) { r.error = "v2 scheme " + r.scheme + " — only Rice is defined"; return r; }
+  if (bps !== 12) { r.error = "bits_per_sample " + bps + " — this page only handles 12"; return r; }
+  if (bytes[13] !== 0) { r.error = "unknown scale_code " + bytes[13]; return r; }
+  if (r.segTotal < 1) { r.error = "segment_total is 0"; return r; }
+  if (r.segBytes < V2_SEG_HDR + 2 || (r.segBytes % 3) !== 0) {
+    r.error = "segment size " + r.segBytes + " is not a usable multiple of 3";
+    return r;
+  }
+
+  var avail = bytes.length - V2_GLOBAL;
+  r.present = Math.floor(avail / r.segBytes);
+  r.tail    = avail - r.present * r.segBytes;
+  if (r.present < 1) { r.error = "no whole segment present"; return r; }
+
+  var list = [];
+  for (s = 0; s < r.present; s++) {
+    var off = V2_GLOBAL + s * r.segBytes;
+    var seg = { slot: s, ok: false, empty: false, bad: false, first: 0, count: 0, faults: 0 };
+    var cWant = bytes[off + 7] | (bytes[off + 8] << 8);
+    var cGot  = crc16Range(bytes, off, r.segBytes, 7);
+
+    if (cGot !== cWant) {
+      seg.bad = true; seg.error = "CRC";
+      r.segDamaged++; r.segs.push(seg); continue;
+    }
+
+    seg.first  = (bytes[off] | (bytes[off + 1] << 8) |
+                  (bytes[off + 2] << 16) | (bytes[off + 3] << 24)) >>> 0;
+    seg.count  = bytes[off + 4] | (bytes[off + 5] << 8);
+    seg.faults = bytes[off + 6];
+
+    if (seg.count === 0) { seg.empty = true; r.segEmpty++; r.segs.push(seg); continue; }
+
+    try {
+      var br = new BitReader(bytes, off + V2_SEG_HDR, off + r.segBytes);
+      var vals = [];
+
+      decodeRice(br, seg.count, block, r.blockStats, vals);
+      br.align();
+      seg.payload = br.pos - (off + V2_SEG_HDR);
+
+      if (V2_SEG_HDR + seg.payload + 2 * seg.faults > r.segBytes) {
+        throw new Error("payload and fault list overlap");
+      }
+      for (j = 0; j < seg.faults; j++) {
+        var p = off + r.segBytes - 2 * (j + 1);
+        var idx = bytes[p] | (bytes[p + 1] << 8);
+        if (idx >= seg.count) { throw new Error("fault index " + idx + " past the end"); }
+        vals[idx] = FAULT;
+      }
+
+      seg.values = vals;
+      seg.ok = true;
+      r.segOk++;
+      r.size.payload += seg.payload;
+      list.push(seg);
+    } catch (e) {
+      seg.bad = true; seg.error = e.message;
+      r.segDamaged++;
+    }
+    r.segs.push(seg);
+  }
+
+  if (!list.length) {
+    r.error = "no readable segment: " + r.segDamaged + " damaged, " + r.segEmpty + " empty";
+    return r;
+  }
+
+  list.sort(function (a, b) { return a.first - b.first; });
+
+  var expect = null;
+  for (i = 0; i < list.length; i++) {
+    var sg = list[i];
+    if (expect !== null && sg.first !== expect) {
+      r.gaps++;
+      if (sg.first > expect) { r.missing += sg.first - expect; }
+    }
+    for (j = 0; j < sg.count; j++) {
+      r.indices.push(sg.first + j);
+      r.values.push(sg.values[j]);
+      if (sg.values[j] === FAULT) { r.faults.push(sg.first + j); }
+    }
+    expect = sg.first + sg.count;
+  }
+
+  /* Overflow is not guesswork: the oldest surviving segment starts at the
+     sample index it starts at, so anything before that has been overwritten. */
+  r.overwritten = list[0].first;
+  r.newest      = r.indices[r.indices.length - 1];
+  r.ok = true;
+  return r;
+}
+
 /* ===== S6  golden vector and self-test ================================= */
 
 var GOLDEN_B64 =
@@ -523,8 +709,22 @@ var REAL_2 = "VEwBAQAEAQB0DgAADAUAABDt0P__yy_8P___p_7of___6fD_0___-h6af_T_" +
              "_5QlPS_-adPQKXNnTS5Z_QL_-U3PSmkNKWdLKblzcgmmmy5Sy80pQ_l-X_L" +
              "nQ_l_8pZpsgm8ss6bP08Pp_T6em8h6U9ynZ_SgAQD1A3cD";
 
+/* The same 70 samples, through the v2 ring at the real geometry (357 B × 17).
+   Produced by the firmware's own bring-up tool, which checks it too, so this
+   string is the one place where the encoder and this page have to agree. */
+var GOLDEN_V2 =
+  "VEwCAQoAZQERAAAMBQAAAKpSAAAAAEYAAiwYDcFXol4AAAAKqqqqqqqmAIAg" +
+  "CAIAgCAIAgCAICAPzAAH9AP7gDK4GgaBoGgaBoGgaBoGgaBoGgaBoGJmZmAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAvACoA";
+
 function selfTest() {
-  var d, p, i;
+  var d, p, q, i;
   try {
     d = b64decode(GOLDEN_B64);
     if (d.error) { return { ok: false, msg: "FAIL — base64: " + d.error }; }
@@ -538,7 +738,26 @@ function selfTest() {
         return { ok: false, msg: "FAIL — sample " + i + ": got " + p.values[i] + ", expected " + GOLDEN[i] };
       }
     }
-    return { ok: true, msg: "PASS — the 70-sample reference vector decodes exactly in this browser" };
+
+    /* The same series again, this time as a one-segment v2 ring. Both formats
+       must produce identical samples, or one of the two decoders is wrong. */
+    d = b64decode(GOLDEN_V2);
+    if (d.error) { return { ok: false, msg: "FAIL — v2 base64: " + d.error }; }
+    q = parseRing(d.bytes);
+    if (!q.ok) { return { ok: false, msg: "FAIL — v2: " + q.error }; }
+    if (q.values.length !== GOLDEN.length) {
+      return { ok: false, msg: "FAIL — v2 decoded " + q.values.length + " samples, expected " + GOLDEN.length };
+    }
+    for (i = 0; i < GOLDEN.length; i++) {
+      if (q.values[i] !== GOLDEN[i]) {
+        return { ok: false, msg: "FAIL — v2 sample " + i + ": got " + q.values[i] + ", expected " + GOLDEN[i] };
+      }
+    }
+    if (q.segOk !== 1 || q.wrapped || q.overwritten !== 0 || q.newest !== 69) {
+      return { ok: false, msg: "FAIL — v2 ring state wrong" };
+    }
+
+    return { ok: true, msg: "PASS — the 70-sample reference vector decodes exactly in this browser, in both v1 and v2" };
   } catch (e) {
     return { ok: false, msg: "FAIL — threw: " + e.message };
   }
@@ -705,7 +924,8 @@ function resetOutputs() {
   var ids = ["bigNum", "bigSub", "mRaw", "mFragBytes", "mAlpha", "mStatus", "mBytes",
              "mHref", "mNav", "mTag", "mTap", "mHead", "mMark", "mHash",
              "cVer", "cCount", "cInterval", "cFirst", "cSpan", "cCrc", "cBytes",
-             "kRatio", "kBits", "dMin", "dMax", "dMean", "dSpan", "dFaults"];
+             "kRatio", "kBits", "dMin", "dMax", "dMean", "dSpan", "dFaults",
+             "gSegs", "gNewest", "gWrap", "gMap"];
   for (var i = 0; i < ids.length; i++) { set(ids[i], "—"); }
   set("bigNum", "—", "num");
   set("bigSub", "—", "sub");
@@ -717,6 +937,7 @@ function resetOutputs() {
   $("preview").textContent = "—";
   show("secChart", false);
   show("secContainer", false);
+  show("secRing", false);
   show("secRuler", false);
   show("degradeRow", false);
   report = {};
@@ -789,21 +1010,10 @@ function renderContainer(raw, dec) {
     banner("clean — CRC 0x" + hex4(p.crcGot) + " verified", "ok");
   }
 
-  var n = p.values.length, i;
-  var lo = null, hi = null, sum = 0, valid = 0;
-  for (i = 0; i < n; i++) {
-    if (p.values[i] === FAULT) { continue; }
-    if (lo === null || p.values[i] < lo) { lo = p.values[i]; }
-    if (hi === null || p.values[i] > hi) { hi = p.values[i]; }
-    sum += p.values[i];
-    valid++;
-  }
+  // headline, range, faults and the block histogram: shared with the ring.
+  var n = renderSeries(p.values, p.faults, p.intervalS, p.blockStats).n;
 
-  // headline: what the log says, not how many bytes it took
-  set("bigNum", n, "num");
-  $("bigNumLbl").textContent = p.degraded ? "samples decoded (unverified)" : "samples";
-  set("bigSub", lo === null ? "no valid samples" : t1(lo) + " … " + t1(hi) + " °C", "sub");
-  $("bigSubLbl").textContent = "temperature range";
+  if (p.degraded) { $("bigNumLbl").textContent = "samples decoded (unverified)"; }
 
   set("cVer", "v" + p.version + " / scheme " + p.scheme +
               (p.scheme === 1 ? " (Rice)" : " (12-bit packed)"));
@@ -826,27 +1036,6 @@ function renderContainer(raw, dec) {
     set("kBits", (p.size.payload * 8 / n).toFixed(2) + " bits/sample");
   }
 
-  set("dMin", lo === null ? "—" : t1(lo) + " °C");
-  set("dMax", hi === null ? "—" : t1(hi) + " °C");
-  set("dMean", valid ? (sum / valid / 10).toFixed(2) + " °C" : "—");
-  set("dSpan", lo === null ? "—" : ((hi - lo) / 10).toFixed(1) + " °C");
-  set("dFaults", p.faults.length === 0 ? "none"
-        : p.faults.length + " at index " + p.faults.slice(0, 24).join(", ") +
-          (p.faults.length > 24 ? " …" : ""),
-      p.faults.length ? "warn" : "");
-
-  // block coding histogram
-  var rows = [], keys = [], k;
-  for (k in p.blockStats) { if (p.blockStats.hasOwnProperty(k)) { keys.push(parseInt(k, 10)); } }
-  keys.sort(function (a, b) { return a - b; });
-  for (i = 0; i < keys.length; i++) {
-    k = keys[i];
-    var label = k === OPT_ZERO ? "zero block" : (k === OPT_ESC ? "escape (raw)" : "Rice k=" + k);
-    var cls = k === OPT_ESC ? ' class="warn"' : "";
-    rows.push("<tr><th>" + esc(label) + "</th><td" + cls + ">" + p.blockStats[k] + " blocks</td></tr>");
-  }
-  $("tBlocks").innerHTML = rows.length ? rows.join("") : "<tr><th>—</th><td>no blocks</td></tr>";
-
   // chart
   var svg = chartSVG(p.values, p.intervalS, p.firstIndex);
   if (svg) {
@@ -866,6 +1055,150 @@ function renderContainer(raw, dec) {
 
   report.mode = "tempcomp";
   report.status = p.degraded ? "crc-failed-unverified" : "clean";
+  report.samples = n;
+  report.bits = n ? (p.size.payload * 8 / n).toFixed(2) : "—";
+  report.ratio = n ? (n * 2 / p.size.total).toFixed(1) : "—";
+  report.faults = p.faults.length;
+  report.marker = "—";
+  report.hash = "—";
+}
+
+/* Shared by both container modes: the numbers that describe a series of
+   samples, whatever framing carried it. */
+function renderSeries(values, faults, intervalS, blockStats) {
+  var n = values.length, i;
+  var lo = null, hi = null, sum = 0, valid = 0;
+
+  for (i = 0; i < n; i++) {
+    if (values[i] === FAULT) { continue; }
+    if (lo === null || values[i] < lo) { lo = values[i]; }
+    if (hi === null || values[i] > hi) { hi = values[i]; }
+    sum += values[i];
+    valid++;
+  }
+
+  set("bigNum", n, "num");
+  $("bigNumLbl").textContent = "samples";
+  set("bigSub", lo === null ? "no valid samples" : t1(lo) + " … " + t1(hi) + " °C", "sub");
+  $("bigSubLbl").textContent = "temperature range";
+
+  set("dMin", lo === null ? "—" : t1(lo) + " °C");
+  set("dMax", hi === null ? "—" : t1(hi) + " °C");
+  set("dMean", valid ? (sum / valid / 10).toFixed(2) + " °C" : "—");
+  set("dSpan", lo === null ? "—" : ((hi - lo) / 10).toFixed(1) + " °C");
+  set("dFaults", faults.length === 0 ? "none"
+        : faults.length + " at index " + faults.slice(0, 24).join(", ") +
+          (faults.length > 24 ? " …" : ""),
+      faults.length ? "warn" : "");
+
+  var rows = [], keys = [], k;
+  for (k in blockStats) { if (blockStats.hasOwnProperty(k)) { keys.push(parseInt(k, 10)); } }
+  keys.sort(function (a, b) { return a - b; });
+  for (i = 0; i < keys.length; i++) {
+    k = keys[i];
+    var label = k === OPT_ZERO ? "zero block" : (k === OPT_ESC ? "escape (raw)" : "Rice k=" + k);
+    var cls = k === OPT_ESC ? ' class="warn"' : "";
+    rows.push("<tr><th>" + esc(label) + "</th><td" + cls + ">" + blockStats[k] + " blocks</td></tr>");
+  }
+  $("tBlocks").innerHTML = rows.length ? rows.join("") : "<tr><th>—</th><td>no blocks</td></tr>";
+
+  return { n: n, lo: lo, hi: hi };
+}
+
+function renderRing(raw, dec) {
+  var p = parseRing(dec.bytes);
+  var i, j;
+
+  if (!p.ok) {
+    banner(p.error, "bad");
+    report.mode = "ring";
+    report.status = p.error;
+    return;
+  }
+
+  show("secRing", true);
+  show("secContainer", true);
+
+  var damagedNote = p.segDamaged
+        ? p.segDamaged + " segment" + (p.segDamaged === 1 ? "" : "s") + " failed the CRC and " +
+          (p.segDamaged === 1 ? "was" : "were") + " skipped — the rest are unaffected"
+        : null;
+
+  if (damagedNote) { banner("partly readable — " + damagedNote, "warn"); }
+  else if (p.gaps) { banner("readable, but " + p.missing + " sample(s) are missing between segments", "warn"); }
+  else             { banner("clean — every segment verified", "ok"); }
+
+  var st = renderSeries(p.values, p.faults, p.intervalS, p.blockStats);
+  var n = st.n;
+
+  /* ---- the ring itself ---- */
+  set("gSegs", p.segOk + " of " + p.present + " readable" +
+               (p.segEmpty ? ", " + p.segEmpty + " unused" : "") +
+               (p.segDamaged ? ", " + p.segDamaged + " damaged" : "") +
+               "  (tag holds " + p.segTotal + " × " + p.segBytes + " B)",
+      p.segDamaged ? "bad" : "ok");
+  set("gNewest", "#" + p.newest + (p.intervalS ? "  — the log ends " +
+        (n > 1 ? dur((n - 1) * p.intervalS) + " after its oldest surviving sample" : "here") : ""));
+  set("gWrap", p.wrapped
+        ? "yes — " + p.overwritten + " sample(s) overwritten, oldest kept is #" + p.indices[0]
+        : "no — nothing has been overwritten yet",
+      p.wrapped ? "warn" : "ok");
+
+  var map = [], cls;
+  for (i = 0; i < p.segs.length; i++) {
+    var sg = p.segs[i];
+    var ch = sg.bad ? "X" : (sg.empty ? "·" : (sg.slot === p.openSeg ? "#" : "="));
+    cls = sg.bad ? ' class="bad"' : (sg.slot === p.openSeg ? ' class="ok"' : "");
+    map.push("<span" + cls + ">" + ch + "</span>");
+  }
+  set("gMap", "");
+  $("gMap").innerHTML = "<code>" + map.join("") + "</code>  (" + p.segs.length + " shown, " +
+                        "open is #" + p.openSeg + ")";
+
+  /* ---- the container table, ring flavour ---- */
+  set("cVer", "v2 / scheme 1 (Rice), cyclic");
+  set("cCount", n + " retained" + (p.wrapped ? ", of " + (p.newest + 1) + " ever logged" : ""));
+  set("cInterval", p.intervalS + " s");
+  set("cFirst", p.indices[0]);
+  set("cSpan", n > 1 ? dur((p.newest - p.indices[0]) * p.intervalS) : "—");
+  set("cCrc", p.segOk + " segment CRC" + (p.segOk === 1 ? "" : "s") + " verified" +
+              (p.segDamaged ? ", " + p.segDamaged + " failed" : ""),
+      p.segDamaged ? "bad" : "ok");
+  set("cBytes", p.size.total + " B = " + p.size.global + " global header + " +
+                p.present + " × " + p.segBytes + " B segments (" +
+                p.size.payload + " B of that is sample data)" +
+                (p.tail ? " + " + p.tail + " B ignored tail" : ""));
+
+  if (n > 0) {
+    set("kRatio", (n * 2) + " B → " + p.size.total + " B  =  " +
+                  (n * 2 / p.size.total).toFixed(1) + "×");
+    set("kBits", (p.size.payload * 8 / n).toFixed(2) + " bits/sample");
+  }
+
+  /* ---- chart ---- */
+  /* Plotted against absolute index, so a gap left by a damaged segment shows
+     as a break rather than silently closing up. */
+  var dense = [], want = p.indices[0], k = 0;
+  for (i = 0; i < p.indices.length; i++) {
+    while (want < p.indices[i]) { dense.push(FAULT); want++; }
+    dense.push(p.values[i]);
+    want++;
+  }
+
+  var svg = chartSVG(dense, p.intervalS, p.indices[0]);
+  if (svg) {
+    show("secChart", true);
+    $("chart").innerHTML = svg;
+    set("chartNote",
+        "Stepped, because the data is quantised to 0.1 °C. "
+        + (p.faults.length ? "Red bars mark faults; the trace breaks rather than bridging them. " : "")
+        + (p.gaps ? "Breaks also appear where a segment is missing. " : "")
+        + (dense.length > DOWNSAMPLE_ABOVE ? "Downsampled min/max per column, so spikes survive. " : "")
+        + "Y axis is held to at least 1 °C.", "note");
+  }
+
+  report.mode = "ring";
+  report.status = p.segDamaged ? "segments-damaged" : (p.gaps ? "gaps" : "clean");
   report.samples = n;
   report.bits = n ? (p.size.payload * 8 / n).toFixed(2) : "—";
   report.ratio = n ? (n * 2 / p.size.total).toFixed(1) : "—";
@@ -927,10 +1260,11 @@ function render() {
     return;
   }
 
-  /* S8 — detection. A v1 blob always starts 'T','L',0x01, which base64-encodes
-     to exactly "VEwB". Anything else is a ruler payload. */
-  if (raw.slice(0, 4) === MAGIC_B64) { renderContainer(raw, dec); }
-  else                               { renderRuler(raw, dec); }
+  /* S8 — detection, on the version byte alone. 'T','L',0x01 base64-encodes to
+     exactly "VEwB" and 0x02 to "VEwC". Anything else is a ruler payload. */
+  if      (raw.slice(0, 4) === MAGIC_B64)    { renderContainer(raw, dec); }
+  else if (raw.slice(0, 4) === MAGIC_B64_V2) { renderRing(raw, dec); }
+  else                                       { renderRuler(raw, dec); }
 }
 
 /* ===== S11  generator, canned payloads, copy — mostly carried over ===== */

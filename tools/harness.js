@@ -156,6 +156,144 @@ if (typeof chartSVG === "function") {
      fsvg.indexOf("26.5") > 0 || fsvg.indexOf("26.6") > 0, "min-span floor not applied");
 }
 
+/* ===== v2, the cyclic ring =====
+   The page has no encoder, so the rings below are built here out of the one
+   real segment the firmware produced: copy it, change its header, fix its CRC.
+   That is enough to exercise ordering, gaps, damage and overflow without
+   inventing a second implementation of the format. */
+
+WScript.Echo("");
+WScript.Echo("=== v2 reference vector ===");
+var v2bytes = bytesOf(GOLDEN_V2);
+var pr = parseRing(v2bytes);
+ok("parses", pr.ok, pr.error);
+if (pr.ok) {
+  ok("70 samples", pr.values.length === 70, "got " + pr.values.length);
+  ok("interval 10 s", pr.intervalS === 10);
+  ok("geometry 357 x 17", pr.segBytes === 357 && pr.segTotal === 17,
+     pr.segBytes + " x " + pr.segTotal);
+  ok("one segment, readable", pr.segOk === 1 && pr.segDamaged === 0);
+  ok("not wrapped", pr.wrapped === false);
+  ok("nothing overwritten", pr.overwritten === 0);
+  ok("newest is #69", pr.newest === 69, "got " + pr.newest);
+  ok("two faults at 42 and 47", pr.faults.join(",") === "42,47", pr.faults.join(","));
+
+  var pv1 = parseContainer(bytesOf(GOLDEN_B64), false);
+  var same = pv1.ok && pv1.values.length === pr.values.length;
+  for (var z = 0; same && z < pv1.values.length; z++) {
+    if (pv1.values[z] !== pr.values[z]) { same = false; }
+  }
+  ok("decodes to exactly the same samples as the v1 vector", same);
+}
+
+/* ---- builders ---- */
+function sliceArr(a, off, len) {
+  var out = [], i;
+  for (i = 0; i < len; i++) { out.push(a[off + i]); }
+  return out;
+}
+function put32(a, o, v) {
+  a[o] = v & 0xFF; a[o + 1] = (v >> 8) & 0xFF;
+  a[o + 2] = (v >> 16) & 0xFF; a[o + 3] = (v >>> 24) & 0xFF;
+}
+function fixSegCrc(seg) {
+  var c = crc16Range(seg, 0, seg.length, 7);
+  seg[7] = c & 0xFF; seg[8] = (c >> 8) & 0xFF;
+}
+/* A copy of the reference segment, restamped to start at `first`. */
+function segAt(first, count) {
+  var s = sliceArr(v2bytes, V2_GLOBAL, 357);
+  put32(s, 0, first);
+  if (count !== undefined) { s[4] = count & 0xFF; s[5] = (count >> 8) & 0xFF; }
+  fixSegCrc(s);
+  return s;
+}
+function buildRing(segs, openSeg, wrapped) {
+  var g = sliceArr(v2bytes, 0, V2_GLOBAL), i, j, c;
+  g[9] = openSeg; g[10] = wrapped ? 1 : 0;
+  c = crc16Range(g, 0, 16, -1);
+  g[16] = c & 0xFF; g[17] = (c >> 8) & 0xFF;
+  for (i = 0; i < segs.length; i++) {
+    for (j = 0; j < segs[i].length; j++) { g.push(segs[i][j]); }
+  }
+  return g;
+}
+
+WScript.Echo("");
+WScript.Echo("=== v2 ring, constructed cases ===");
+
+var two = parseRing(buildRing([segAt(0), segAt(70)], 1, false));
+ok("two segments: 140 samples", two.ok && two.values.length === 140,
+   two.ok ? "got " + two.values.length : two.error);
+ok("two segments: indices run 0..139",
+   two.ok && two.indices[0] === 0 && two.indices[139] === 139);
+ok("two segments: no gaps", two.ok && two.gaps === 0);
+
+/* Slot order is not time order: the ring writes round and round. */
+var rev = parseRing(buildRing([segAt(70), segAt(0)], 0, true));
+ok("out-of-order slots are sorted by first sample index",
+   rev.ok && rev.indices[0] === 0 && rev.indices[139] === 139, rev.error);
+ok("wrapped flag is read", rev.ok && rev.wrapped === true);
+
+/* A hole between segments must show, not close up silently. */
+var gap = parseRing(buildRing([segAt(0), segAt(100)], 1, false));
+ok("gap: counted", gap.ok && gap.gaps === 1, gap.ok ? "gaps=" + gap.gaps : gap.error);
+ok("gap: 30 samples reported missing", gap.ok && gap.missing === 30,
+   gap.ok ? "missing=" + gap.missing : "");
+ok("gap: both sides still decode", gap.ok && gap.values.length === 140);
+
+/* Damage is contained: one bad segment costs only itself. */
+var bad = segAt(70); bad[40] ^= 0xFF;          // corrupt payload, leave CRC stale
+var dmg = parseRing(buildRing([segAt(0), bad], 1, false));
+ok("damaged segment: skipped", dmg.ok && dmg.segDamaged === 1, dmg.error);
+ok("damaged segment: the good one survives", dmg.ok && dmg.values.length === 70);
+ok("damaged segment: 70 samples still charted", dmg.ok && dmg.indices[0] === 0);
+
+var allBad = segAt(0); allBad[40] ^= 0xFF;
+var none = parseRing(buildRing([allBad], 0, false));
+ok("every segment damaged is an error", !none.ok && /no readable segment/.test(none.error),
+   none.error);
+
+/* A segment that has never been written carries count 0. */
+var emptySeg = segAt(0, 0);
+var emp = parseRing(buildRing([segAt(0), emptySeg], 0, false));
+ok("empty segment counted and skipped", emp.ok && emp.segEmpty === 1 && emp.values.length === 70,
+   emp.error);
+
+/* Overflow is derived from the oldest surviving index, not guessed. */
+var ovr = parseRing(buildRing([segAt(500), segAt(570)], 1, true));
+ok("overflow: 500 samples reported overwritten", ovr.ok && ovr.overwritten === 500,
+   ovr.ok ? "got " + ovr.overwritten : ovr.error);
+ok("overflow: newest is #639", ovr.ok && ovr.newest === 639, ovr.ok ? "got " + ovr.newest : "");
+
+/* A fragment cut mid-segment keeps every whole segment before the cut. */
+var cut = buildRing([segAt(0), segAt(70)], 1, false);
+cut.length = cut.length - 100;
+var cutP = parseRing(cut);
+ok("truncated fragment: whole segments kept", cutP.ok && cutP.values.length === 70, cutP.error);
+ok("truncated fragment: tail reported", cutP.ok && cutP.tail === 257, "tail=" + (cutP.tail || ""));
+
+/* Rejections. */
+var badG = sliceArr(v2bytes, 0, v2bytes.length); badG[4] ^= 0xFF;   // interval, CRC now stale
+ok("bad global header CRC rejected", !parseRing(badG).ok);
+var badV = sliceArr(v2bytes, 0, v2bytes.length); badV[2] = 9;
+ok("unknown version rejected", !parseRing(badV).ok);
+var badGeom = sliceArr(v2bytes, 0, v2bytes.length);
+badGeom[6] = 100; badGeom[7] = 0;                                   // 100 is not a multiple of 3
+var c2 = crc16Range(badGeom, 0, 16, -1); badGeom[16] = c2 & 0xFF; badGeom[17] = (c2 >> 8) & 0xFF;
+ok("segment size not a multiple of 3 rejected", !parseRing(badGeom).ok);
+
+/* The ring's chart plots against absolute index, so a gap must break it. */
+if (typeof chartSVG === "function" && gap.ok) {
+  var dense = [], want = gap.indices[0], gi;
+  for (gi = 0; gi < gap.indices.length; gi++) {
+    while (want < gap.indices[gi]) { dense.push(-2048); want++; }
+    dense.push(gap.values[gi]); want++;
+  }
+  var gsvg = chartSVG(dense, gap.intervalS, gap.indices[0]);
+  ok("gap breaks the chart trace", !!gsvg && gsvg.indexOf('class="gap"') > 0);
+}
+
 WScript.Echo("");
 WScript.Echo(fail === 0 ? ("ALL " + pass + " CHECKS PASSED") : (fail + " FAILED of " + (pass + fail)));
 WScript.Quit(fail === 0 ? 0 : 1);

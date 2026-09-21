@@ -524,3 +524,54 @@ banner is green before trusting any field result.
 
 ---
 
+
+## 14. Addendum: format v2, the cyclic log
+
+Added after the logger moved to an 8 KB tag (ST25DV64KC) and began writing a cyclic log rather
+than one container. Specified in `../../NFCLOG-64K-PLAN.md` section 13; this section records
+only what it meant for the page.
+
+### 14.1 What changed
+
+- **Detection is on the version byte.** `VEwB` is v1, `VEwC` is v2, anything else is a ruler.
+  The old rule was already this, just with one value.
+- **`parseRing`** sits beside `parseContainer` and returns the same shape of result: values,
+  faults, block statistics, sizes. Everything downstream — the chart, the statistics, the report
+  row — works on that shape and needed no changes.
+- **The Rice payload decoder is now shared.** It was inline in `parseContainer`; a v2 segment
+  needs exactly the same loop, so it moved out to `decodeRice` and both call it. The firmware
+  did the same on its side in the same week, for the same reason.
+- **`BitReader` takes an end.** A segment with a corrupt sample count must not read its way into
+  the next segment.
+- **`renderSeries`** holds what both modes say about a series of samples; `renderContainer` and
+  `renderRing` differ only in the framing they describe above it.
+
+### 14.2 What the ring adds to the display
+
+Three facts a single container cannot express, all reported rather than inferred by the reader:
+how many samples have been **overwritten** (the oldest surviving segment's first index), which
+sample is **newest**, and which segments are **readable, unused or damaged** — shown as a map of
+the whole ring.
+
+A damaged segment costs only itself. The chart plots against absolute sample index, so the hole
+it leaves is a break in the trace, not a silent join.
+
+### 14.3 Verification
+
+The self-test now checks the same 70 samples twice, once per format, and they must decode
+identically. The harness gained 31 v2 checks (78 in total), built by copying the one real
+segment the firmware produced and restamping its header — ordering, gaps, damage, emptiness,
+overflow, truncation and four rejections.
+
+`run-jstest.ps1` also parses the **whole** page script now. The tests only ever covered the pure
+functions, so a syntax error in the render code would have reached a phone before anything
+caught it.
+
+Against hardware: the 8116-character fragment from the firmware's ring test — 17 segments,
+wrapped, 430 samples overwritten — decoded by this page's own parser to 3431 samples, every one
+identical to what the board echoed while logging them.
+
+### 14.4 Still needs a real browser
+
+Section 13.4 still applies, and now covers the ring: the segment map, the ring table and the
+gap-broken chart have not been seen in a browser, on a desktop or a phone.
