@@ -120,13 +120,13 @@
 </header>
 
 <nav class="tabs" role="tablist">
-  <button class="tab on" id="tabSend" role="tab" aria-selected="true" data-pane="paneSend">Sending Site</button>
-  <button class="tab" id="tabRecv" role="tab" aria-selected="false" data-pane="paneRecv">Receiving Site</button>
+  <button class="tab" id="tabSend" role="tab" aria-selected="false" data-pane="paneSend">Sending Site</button>
+  <button class="tab on" id="tabRecv" role="tab" aria-selected="true" data-pane="paneRecv">Receiving Site</button>
   <button class="tab" id="tabDet" role="tab" aria-selected="false" data-pane="paneDet">Details</button>
 </nav>
 
 <!-- ============================ Sending Site ============================ -->
-<section class="pane" id="paneSend" role="tabpanel">
+<section class="pane hide" id="paneSend" role="tabpanel">
   <div class="msg hide" id="sendMsg"></div>
   <div id="healthBlock">
     <h1 class="h1">Device Health</h1>
@@ -142,7 +142,7 @@
 </section>
 
 <!-- =========================== Receiving Site =========================== -->
-<section class="pane hide" id="paneRecv" role="tabpanel">
+<section class="pane" id="paneRecv" role="tabpanel">
   <div class="msg hide" id="recvMsg"></div>
 
   <form class="ask hide" id="recvBefore" novalidate>
